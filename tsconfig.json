@@ -1,0 +1,17 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "jsx": "react-native",
+    "lib": [
+      "ES2022"
+    ],
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true
+  },
+  "exclude": [
+    "supabase/functions"
+  ]
+}

@@ -1,0 +1,7 @@
+project_id = "assistant-ia-veto"
+
+[functions.process-consultation]
+verify_jwt = true
+
+[functions.extract-template]
+verify_jwt = true

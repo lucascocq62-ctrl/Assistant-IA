@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Assistant IA Veto",
+    "slug": "assistant-ia-veto",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "assistantiaveto",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Enregistrer la consultation vétérinaire pour générer une transcription puis un compte rendu.",
+        "NSPhotoLibraryUsageDescription": "Importer une photo de modèle de consultation à transformer en gabarit."
+      }
+    },
+    "android": {
+      "permissions": ["RECORD_AUDIO", "READ_MEDIA_IMAGES"]
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Enregistrer la consultation vétérinaire pour générer une transcription puis un compte rendu."
+        }
+      ],
+      "expo-image-picker"
+    ]
+  }
+}
