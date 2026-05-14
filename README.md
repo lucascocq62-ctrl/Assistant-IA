@@ -42,6 +42,27 @@ EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 ```
 
+
+## Déploiement Vercel web
+
+Le projet est configuré pour éviter le 404 Vercel : Vercel lance `npm run build`, Expo exporte l'application web statique dans `dist`, puis toutes les routes sont réécrites vers `index.html`.
+
+Dans Vercel, vérifie les paramètres suivants :
+
+- **Framework Preset** : `Other` ou auto avec le fichier `vercel.json`.
+- **Build Command** : `npm run build`.
+- **Output Directory** : `dist`.
+- **Install Command** : `npm install`.
+
+Ajoute aussi ces variables d'environnement côté Vercel avant de redéployer :
+
+```bash
+EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+```
+
+Après modification, lance un nouveau déploiement Vercel. Si tu vois encore un 404, vérifie que le déploiement utilise bien le dernier commit et que `dist/index.html` est publié comme dossier de sortie.
+
 ## Configuration Supabase
 
 1. Créer un projet Supabase.
