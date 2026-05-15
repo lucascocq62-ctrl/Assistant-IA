@@ -6,6 +6,7 @@ export type VetProfile = {
   normalized_order_number: string;
   created_by_user_id?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 export type TranscriptionProvider = 'groq' | 'openai';
@@ -23,6 +24,7 @@ export type ConsultationTemplate = {
   description?: string | null;
   sections: TemplateSection[];
   created_at?: string;
+  updated_at?: string;
 };
 
 export type ConsultationReport = {

@@ -1,9 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Session } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
-import { completeOAuthSignIn, getGoogleRedirectUrl, signInWithGoogle, signInWithoutGoogle, signOut } from '../lib/auth';
+import { getCurrentVetProfile, signInWithoutGoogle, signOut } from '../lib/auth';
 import { getGuestMode, setGuestMode } from '../lib/guestMode';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { VetProfile } from '../lib/types';
@@ -13,7 +13,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export function HomeScreen({ navigation }: Props) {
   const [session, setSession] = useState<Session | null>(null);
   const [authStatus, setAuthStatus] = useState('Connexion Supabase…');
-  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
   const [isNoGoogleSigningIn, setIsNoGoogleSigningIn] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [orderNumber, setOrderNumber] = useState('');
@@ -27,21 +26,25 @@ export function HomeScreen({ navigation }: Props) {
         setAuthStatus(
           guestEnabled
             ? 'Mode invité : accès sans authentification. Les données restent locales.'
-            : 'Configuration Supabase manquante : tu peux tout de même entrer en mode invité.',
+            : 'Configuration Supabase manquante : ajoute les variables Supabase pour activer la connexion prénom + numéro d’ordre.',
         );
         return;
       }
 
       const { data } = await supabase.auth.getSession();
       setSession(data.session);
-      if (data.session?.user.email) {
-        setAuthStatus('Connecté avec Google');
-      } else if (data.session) {
-        setAuthStatus('Connecté sans Google');
+      if (data.session) {
+        try {
+          const profile = await getCurrentVetProfile();
+          setVetProfile(profile);
+          setAuthStatus(profile ? `Connecté : ${profile.first_name} · n° ${profile.order_number}` : 'Session vétérinaire active. Renseigne ton prénom et ton numéro d’ordre si nécessaire.');
+        } catch (error) {
+          setAuthStatus(error instanceof Error ? error.message : 'Session active, mais le profil vétérinaire est introuvable.');
+        }
       } else if (guestEnabled) {
         setAuthStatus('Mode invité : accès sans authentification. Les données restent locales.');
       } else {
-        setAuthStatus('Connecte-toi avec Google, avec ton numéro d’ordre ou continue en mode invité.');
+        setAuthStatus('Connecte-toi avec ton prénom et ton numéro d’ordre, ou continue en mode invité.');
       }
     };
 
@@ -50,61 +53,27 @@ export function HomeScreen({ navigation }: Props) {
       void bootstrapAuth(enabled);
     });
 
-    const handleUrl = async ({ url }: { url: string }) => {
-      try {
-        await completeOAuthSignIn(url);
-      } catch (error) {
-        Alert.alert('Connexion Google impossible', error instanceof Error ? error.message : 'Impossible de finaliser la session Google.');
-      }
-    };
-
-    void Linking.getInitialURL().then((url) => {
-      if (url) void handleUrl({ url });
-    });
-
-    const linkingSubscription = Linking.addEventListener('url', handleUrl);
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (nextSession?.user.email) {
-        setAuthStatus('Connecté avec Google');
-      } else if (nextSession) {
-        setAuthStatus('Connecté sans Google');
+      if (nextSession) {
+        setAuthStatus('Session vétérinaire active');
       } else {
-        setAuthStatus('Connecte-toi avec Google, avec ton numéro d’ordre ou continue en mode invité.');
+        setAuthStatus('Connecte-toi avec ton prénom et ton numéro d’ordre, ou continue en mode invité.');
         setVetProfile(null);
       }
     });
 
     return () => {
-      linkingSubscription.remove();
       data.subscription.unsubscribe();
     };
   }, []);
 
-  const handleGoogleSignIn = async () => {
-    if (!isSupabaseConfigured) {
-      Alert.alert(
-        'Configuration Supabase manquante',
-        'Ajoute EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans Vercel, puis redéploie avant de te connecter avec Google.',
-      );
-      return;
-    }
-
-    setIsGoogleSigningIn(true);
-    try {
-      await signInWithGoogle();
-    } catch (error) {
-      Alert.alert('Connexion Google impossible', error instanceof Error ? error.message : 'Vérifie la configuration OAuth Supabase et l’URL de redirection.');
-    } finally {
-      setIsGoogleSigningIn(false);
-    }
-  };
 
   const handleNoGoogleSignIn = async () => {
     if (!isSupabaseConfigured) {
       Alert.alert(
         'Configuration Supabase manquante',
-        'Ajoute EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans Vercel, puis redéploie avant de te connecter sans Google.',
+        'Ajoute EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans Vercel, puis redéploie avant de te connecter avec prénom + numéro d’ordre.',
       );
       return;
     }
@@ -117,11 +86,11 @@ export function HomeScreen({ navigation }: Props) {
       setVetProfile(profile);
       setIsGuestMode(false);
       await setGuestMode(false);
-      setAuthStatus(`Connecté sans Google : ${profile.first_name} · n° ${profile.order_number}`);
+      setAuthStatus(`Connecté : ${profile.first_name} · n° ${profile.order_number}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.';
       setNoGoogleError(message);
-      Alert.alert('Connexion sans Google impossible', message);
+      Alert.alert('Connexion impossible', message);
     } finally {
       setIsNoGoogleSigningIn(false);
     }
@@ -142,7 +111,7 @@ export function HomeScreen({ navigation }: Props) {
     setSession(null);
   };
 
-  const connectedLabel = session?.user.email ?? (vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : 'Mode invité (sans compte)');
+  const connectedLabel = vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : session ? 'Session vétérinaire active' : 'Mode invité (sans compte)';
   const canUseApp = Boolean(session || isGuestMode);
   const canSubmitNoGoogle = Boolean(firstName.trim() && orderNumber.trim() && !isNoGoogleSigningIn);
 
@@ -187,25 +156,11 @@ export function HomeScreen({ navigation }: Props) {
         </View>
       ) : (
         <View style={styles.actionCard}>
-          <Text style={styles.actionTitle}>Connexion sécurisée</Text>
-          <Text style={styles.actionText}>Connecte-toi avec Google pour associer chaque génération de compte rendu à ton compte vétérinaire.</Text>
-          <Pressable accessibilityRole="button" style={[styles.googleButton, isGoogleSigningIn && styles.disabledButton]} onPress={handleGoogleSignIn} disabled={isGoogleSigningIn}>
-            <Text style={styles.googleText}>{isGoogleSigningIn ? 'Ouverture de Google…' : 'Continuer avec Google'}</Text>
-          </Pressable>
-
-          <View style={styles.separatorRow}>
-            <View style={styles.separatorLine} />
-            <Text style={styles.separatorText}>ou</Text>
-            <View style={styles.separatorLine} />
-          </View>
-
-          <Pressable accessibilityRole="button" style={styles.guestButton} onPress={handleGuestAccess}>
-            <Text style={styles.guestText}>Accéder sans authentification</Text>
-            <Text style={styles.guestHint}>Mode invité : modèles locaux et compte rendu brouillon, sans sauvegarde Supabase.</Text>
-          </Pressable>
+          <Text style={styles.actionTitle}>Connexion vétérinaire</Text>
+          <Text style={styles.actionText}>Connecte-toi uniquement avec ton prénom et ton numéro d’ordre. Vet’Help crée une session Supabase anonyme, sans compte Google.</Text>
 
           <View style={styles.noGoogleForm}>
-            <Text style={styles.noGoogleTitle}>Connexion sans Google</Text>
+            <Text style={styles.noGoogleTitle}>Prénom + numéro d’ordre</Text>
             <Text style={styles.formHint}>Renseigne ton prénom et ton numéro d’ordre. Si le profil existe déjà, il sera réutilisé.</Text>
             <TextInput
               autoCapitalize="words"
@@ -222,19 +177,28 @@ export function HomeScreen({ navigation }: Props) {
               onChangeText={setOrderNumber}
             />
             <TouchableOpacity accessibilityRole="button" activeOpacity={0.82} style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={!canSubmitNoGoogle}>
-              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion…' : 'Connexion sans Google'}</Text>
+              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion…' : 'Se connecter'}</Text>
             </TouchableOpacity>
             {noGoogleError ? <Text style={styles.errorText}>{noGoogleError}</Text> : null}
             <Text style={styles.formHint}>Vet’Help ignore les majuscules, accents, espaces et séparateurs du numéro pour éviter les doublons.</Text>
           </View>
 
-          <Text style={styles.redirectHint}>URL de retour OAuth : {getGoogleRedirectUrl()}</Text>
+          <View style={styles.separatorRow}>
+            <View style={styles.separatorLine} />
+            <Text style={styles.separatorText}>ou</Text>
+            <View style={styles.separatorLine} />
+          </View>
+
+          <Pressable accessibilityRole="button" style={styles.guestButton} onPress={handleGuestAccess}>
+            <Text style={styles.guestText}>Accéder sans authentification</Text>
+            <Text style={styles.guestHint}>Mode invité : modèles locaux et compte rendu brouillon, sans sauvegarde Supabase.</Text>
+          </Pressable>
         </View>
       )}
 
       <Text style={styles.auth}>{authStatus}</Text>
       <View style={styles.notice}>
-        <Text style={styles.noticeText}>Si Google redirige vers localhost, configure `EXPO_PUBLIC_AUTH_REDIRECT_URL` avec ton URL Vercel et ajoute cette même URL dans Supabase Auth.</Text>
+        <Text style={styles.noticeText}>Pour que cette connexion fonctionne, Supabase doit avoir les connexions anonymes activées et la migration des profils vétérinaires appliquée.</Text>
       </View>
     </ScrollView>
   );
@@ -261,7 +225,6 @@ const styles = StyleSheet.create({
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   secondaryButton: { backgroundColor: '#e0f2fe', padding: 16, borderRadius: 14, alignItems: 'center' },
   secondaryText: { color: '#0369a1', fontWeight: '800', fontSize: 15 },
-  googleButton: { backgroundColor: '#111827', padding: 16, borderRadius: 14, alignItems: 'center', cursor: 'pointer' as never },
   separatorRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
   separatorLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
   separatorText: { color: '#64748b', fontWeight: '800' },
@@ -276,8 +239,6 @@ const styles = StyleSheet.create({
   formHint: { color: '#64748b', fontSize: 12, lineHeight: 17 },
   errorText: { color: '#b91c1c', fontSize: 12, fontWeight: '800', lineHeight: 17 },
   disabledButton: { opacity: 0.5 },
-  googleText: { color: '#fff', fontWeight: '900', fontSize: 16 },
-  redirectHint: { color: '#64748b', fontSize: 12, lineHeight: 17 },
   logoutButton: { padding: 8, alignItems: 'center' },
   logoutText: { color: '#dc2626', fontWeight: '800' },
   auth: { color: '#334155', fontWeight: '700', textAlign: 'center' },
