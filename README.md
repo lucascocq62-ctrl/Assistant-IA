@@ -12,8 +12,8 @@ Vet'Help est une application mobile autonome pour générer un compte rendu de c
 - Suppression automatique de l'audio côté mobile et dans Supabase Storage dès que la transcription est terminée.
 - Modèles de consultation configurables avec rubriques et consignes.
 - Import d'un modèle depuis une photo via une Edge Function OpenAI multimodale.
-- Authentification Google via Supabase, connexion sans Google avec prénom + numéro d’ordre, ou accès invité sans authentification.
-- Base de données Supabase avec profils Google, profils vétérinaires sans Google, demandes de génération, consultations, modèles et RLS par utilisateur.
+- Authentification sans Google via Supabase : prénom + numéro d’ordre avec session anonyme, ou accès invité local sans authentification.
+- Base de données Supabase avec profils vétérinaires prénom + numéro d’ordre, demandes de génération, consultations, modèles et RLS par utilisateur.
 
 ## Architecture
 
@@ -41,7 +41,6 @@ Renseigner dans `.env` :
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-EXPO_PUBLIC_AUTH_REDIRECT_URL=https://YOUR_VERCEL_DOMAIN.vercel.app
 ```
 
 
@@ -56,45 +55,35 @@ Dans Vercel, vérifie les paramètres suivants :
 - **Output Directory** : `dist`.
 - **Install Command** : `npm install`.
 
-Ajoute aussi ces variables d'environnement côté Vercel avant de redéployer. `EXPO_PUBLIC_AUTH_REDIRECT_URL` doit être ton domaine Vercel public, sinon Supabase/Google peut retomber sur `localhost` :
+Ajoute aussi ces variables d'environnement côté Vercel avant de redéployer :
 
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-EXPO_PUBLIC_AUTH_REDIRECT_URL=https://YOUR_VERCEL_DOMAIN.vercel.app
 ```
 
 Après modification, lance un nouveau déploiement Vercel. Si tu vois encore un 404, vérifie que le déploiement utilise bien le dernier commit et que `dist/index.html` est publié comme dossier de sortie.
 
 
-### Correction de l’erreur Google qui redirige vers localhost
-
-Si le navigateur affiche `localhost n’autorise pas la connexion` après le clic sur Google, ce n’est pas un problème du bouton : l’URL de retour OAuth pointe encore vers `localhost`. Corrige ces trois endroits puis redéploie :
-
-1. Dans Vercel > Project Settings > Environment Variables, ajoute `EXPO_PUBLIC_AUTH_REDIRECT_URL=https://TON-DOMAINE.vercel.app`.
-2. Dans Supabase > Authentication > URL Configuration, mets **Site URL** à `https://TON-DOMAINE.vercel.app`.
-3. Dans Supabase > Authentication > URL Configuration > Redirect URLs, ajoute `https://TON-DOMAINE.vercel.app` et, pour mobile, `vethelp://auth/callback`.
-
 ## Configuration Supabase
 
 1. Créer un projet Supabase.
-2. Activer **Google** dans Supabase Auth > Providers.
-3. Activer aussi **Anonymous sign-ins** dans Supabase Auth si tu veux autoriser la connexion sans Google par prénom + numéro d’ordre.
-4. Dans Supabase Auth > URL Configuration, règle **Site URL** sur `https://TON-DOMAINE.vercel.app` et ajoute les redirect URLs `https://TON-DOMAINE.vercel.app`, `https://TON-PROJET.supabase.co/auth/v1/callback` et `vethelp://auth/callback` pour mobile. Si cette étape reste sur `localhost`, Google affichera `ERR_CONNECTION_REFUSED` après connexion.
-5. Appliquer la migration :
+2. Dans Supabase > Authentication > Providers, active **Anonymous sign-ins**. C’est indispensable : la connexion prénom + numéro d’ordre crée une session Supabase anonyme avant de créer/récupérer le profil vétérinaire.
+3. Dans Supabase > Project Settings > API, copie l’URL du projet et la clé `anon public`, puis renseigne-les dans `.env` localement et dans les variables d’environnement Vercel : `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+4. Appliquer les migrations :
 
 ```bash
 supabase db push
 ```
 
-6. Déployer les Edge Functions :
+5. Déployer les Edge Functions :
 
 ```bash
 supabase functions deploy process-consultation
 supabase functions deploy extract-template
 ```
 
-7. Ajouter les secrets :
+6. Ajouter les secrets :
 
 ```bash
 supabase secrets set OPENAI_API_KEY=sk-...
@@ -116,14 +105,30 @@ En mode invité :
 - aucun appel de transcription ou de rédaction IA n’est lancé ;
 - le compte rendu généré est un brouillon structuré avec les rubriques du modèle et doit être complété manuellement, ou régénéré après connexion.
 
-Pour obtenir un compte rendu rempli automatiquement par l’IA, il faut se connecter avec Google ou avec le prénom + numéro d’ordre.
+Pour obtenir un compte rendu rempli automatiquement par l’IA, il faut se connecter avec le prénom + numéro d’ordre.
 
 
-### Connexion sans Google
+### Connexion prénom + numéro d’ordre
 
-Sous le bouton Google, l’application propose **Connexion sans Google**. Le formulaire demande un prénom et un numéro d’ordre. Vet’Help crée alors une session Supabase anonyme, puis appelle la fonction SQL `get_or_create_vet_profile`.
+L’écran d’accueil n’utilise plus Google. Le formulaire demande uniquement un prénom et un numéro d’ordre. Vet’Help crée alors une session Supabase anonyme, puis appelle la fonction SQL `get_or_create_vet_profile`.
 
 Cette fonction normalise le prénom et le numéro d’ordre avant de chercher le profil : elle ignore les majuscules, les accents, les espaces et les séparateurs du numéro. Si un profil existe déjà avec les mêmes valeurs normalisées, il est réutilisé et aucun doublon n’est créé.
+
+Checklist précise pour que ça fonctionne en production :
+
+1. Supabase > Authentication > Providers : activer **Anonymous sign-ins**.
+2. Supabase > SQL Editor ou Supabase CLI : appliquer toutes les migrations avec `supabase db push`. Les migrations `202605150001_vet_profiles_without_google.sql`, `202605150002_harden_no_google_auth.sql` et `202605150003_resilient_vet_profile_policies.sql` doivent créer/renforcer `vet_profiles`, ses politiques RLS et `get_or_create_vet_profile`.
+3. Vercel > Project Settings > Environment Variables : ajouter `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` avec les valeurs du projet Supabase. Attention : ces variables Expo sont injectées au build, donc il faut redéployer après chaque changement.
+4. Redéployer Vercel après l’ajout des variables, puis vérifier que le déploiement utilise bien le dernier commit.
+5. Tester l’app : saisir un prénom, saisir un numéro d’ordre, cliquer **Se connecter**. Si ça échoue, le message affiché indique maintenant quoi corriger : Anonymous sign-ins, variables Vercel, réseau ou migration RPC.
+
+### Diagnostic si le bouton **Se connecter** ne marche pas
+
+- Si le message parle de `EXPO_PUBLIC_SUPABASE_URL` ou `EXPO_PUBLIC_SUPABASE_ANON_KEY`, ajoute les deux variables dans Vercel puis redéploie : Expo ne les lit pas dynamiquement après le build.
+- Si le message parle des connexions anonymes, active **Anonymous sign-ins** dans Supabase > Authentication > Providers.
+- Si le message parle de `get_or_create_vet_profile` ou des politiques RLS, lance `supabase db push` sur le bon projet Supabase, puis attends quelques secondes que le cache de schéma Supabase se mette à jour.
+- Si le message parle de réseau ou de délai dépassé, vérifie que l’URL Supabase correspond au bon projet et que la clé `anon public` n’a pas été copiée avec un espace.
+- Si l’app affiche “profil de secours”, la connexion Supabase Auth fonctionne, mais la table `vet_profiles` ou le RPC ne sont pas encore correctement migrés : applique la migration `202605150003_resilient_vet_profile_policies.sql`.
 
 ## Données créées en base
 
