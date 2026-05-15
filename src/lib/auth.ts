@@ -26,7 +26,7 @@ export const signInWithGoogle = async () => {
     provider: 'google',
     options: {
       redirectTo,
-      skipBrowserRedirect: Platform.OS !== 'web',
+      skipBrowserRedirect: true,
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',
@@ -36,7 +36,12 @@ export const signInWithGoogle = async () => {
 
   if (error) throw error;
 
-  if (Platform.OS !== 'web' && data.url) {
+  if (data.url) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign(data.url);
+      return;
+    }
+
     await Linking.openURL(data.url);
   }
 };

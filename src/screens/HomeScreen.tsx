@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Session } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { completeOAuthSignIn, getGoogleRedirectUrl, signInWithGoogle, signOut } from '../lib/auth';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -51,6 +51,14 @@ export function HomeScreen({ navigation }: Props) {
   }, []);
 
   const handleGoogleSignIn = async () => {
+    if (!isSupabaseConfigured) {
+      Alert.alert(
+        'Configuration Supabase manquante',
+        'Ajoute EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans Vercel, puis redéploie avant de te connecter avec Google.',
+      );
+      return;
+    }
+
     setIsSigningIn(true);
     try {
       await signInWithGoogle();
@@ -68,7 +76,7 @@ export function HomeScreen({ navigation }: Props) {
   const canUseApp = Boolean(session);
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.heroCard}>
         <View style={styles.logoMark}>
           <Text style={styles.logoText}>VH</Text>
@@ -110,7 +118,7 @@ export function HomeScreen({ navigation }: Props) {
         <View style={styles.actionCard}>
           <Text style={styles.actionTitle}>Connexion sécurisée</Text>
           <Text style={styles.actionText}>Connecte-toi avec Google pour associer chaque génération de compte rendu à ton compte vétérinaire.</Text>
-          <Pressable style={[styles.googleButton, (!isSupabaseConfigured || isSigningIn) && styles.disabledButton]} onPress={handleGoogleSignIn} disabled={!isSupabaseConfigured || isSigningIn}>
+          <Pressable accessibilityRole="button" style={[styles.googleButton, isSigningIn && styles.disabledButton]} onPress={handleGoogleSignIn} disabled={isSigningIn}>
             <Text style={styles.googleText}>{isSigningIn ? 'Ouverture de Google…' : 'Continuer avec Google'}</Text>
           </Pressable>
           <Text style={styles.redirectHint}>URL de retour OAuth : {getGoogleRedirectUrl()}</Text>
@@ -121,12 +129,13 @@ export function HomeScreen({ navigation }: Props) {
       <View style={styles.notice}>
         <Text style={styles.noticeText}>Si Google redirige vers localhost, configure `EXPO_PUBLIC_AUTH_REDIRECT_URL` avec ton URL Vercel et ajoute cette même URL dans Supabase Auth.</Text>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 22, justifyContent: 'center', gap: 16, backgroundColor: '#eaf2ff' },
+  screen: { flex: 1, backgroundColor: '#eaf2ff' },
+  container: { flexGrow: 1, padding: 22, justifyContent: 'center', gap: 16 },
   heroCard: { backgroundColor: '#0f172a', borderRadius: 28, padding: 24, gap: 14, shadowColor: '#0f172a', shadowOpacity: 0.18, shadowRadius: 22, shadowOffset: { width: 0, height: 12 } },
   logoMark: { width: 58, height: 58, borderRadius: 18, backgroundColor: '#38bdf8', alignItems: 'center', justifyContent: 'center' },
   logoText: { color: '#082f49', fontWeight: '900', fontSize: 22 },
@@ -145,7 +154,7 @@ const styles = StyleSheet.create({
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   secondaryButton: { backgroundColor: '#e0f2fe', padding: 16, borderRadius: 14, alignItems: 'center' },
   secondaryText: { color: '#0369a1', fontWeight: '800', fontSize: 15 },
-  googleButton: { backgroundColor: '#111827', padding: 16, borderRadius: 14, alignItems: 'center' },
+  googleButton: { backgroundColor: '#111827', padding: 16, borderRadius: 14, alignItems: 'center', cursor: 'pointer' as never },
   disabledButton: { opacity: 0.5 },
   googleText: { color: '#fff', fontWeight: '900', fontSize: 16 },
   redirectHint: { color: '#64748b', fontSize: 12, lineHeight: 17 },
