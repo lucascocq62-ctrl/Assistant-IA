@@ -17,6 +17,7 @@ export function HomeScreen({ navigation }: Props) {
   const [firstName, setFirstName] = useState('');
   const [orderNumber, setOrderNumber] = useState('');
   const [vetProfile, setVetProfile] = useState<VetProfile | null>(null);
+  const [noGoogleError, setNoGoogleError] = useState<string | null>(null);
 
   useEffect(() => {
     const bootstrapAuth = async () => {
@@ -98,11 +99,15 @@ export function HomeScreen({ navigation }: Props) {
 
     setIsNoGoogleSigningIn(true);
     try {
-      const profile = await signInWithoutGoogle(firstName, orderNumber);
+      setNoGoogleError(null);
+      const { profile, session: nextSession } = await signInWithoutGoogle(firstName, orderNumber);
+      setSession(nextSession);
       setVetProfile(profile);
       setAuthStatus(`Connecté sans Google : ${profile.first_name} · n° ${profile.order_number}`);
     } catch (error) {
-      Alert.alert('Connexion sans Google impossible', error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.');
+      const message = error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.';
+      setNoGoogleError(message);
+      Alert.alert('Connexion sans Google impossible', message);
     } finally {
       setIsNoGoogleSigningIn(false);
     }
@@ -115,6 +120,7 @@ export function HomeScreen({ navigation }: Props) {
 
   const connectedLabel = session?.user.email ?? (vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : 'Connexion sans Google');
   const canUseApp = Boolean(session);
+  const canSubmitNoGoogle = Boolean(firstName.trim() && orderNumber.trim() && !isNoGoogleSigningIn);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
@@ -186,9 +192,10 @@ export function HomeScreen({ navigation }: Props) {
               value={orderNumber}
               onChangeText={setOrderNumber}
             />
-            <TouchableOpacity accessibilityRole="button" activeOpacity={0.82} style={[styles.noGoogleButton, isNoGoogleSigningIn && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={isNoGoogleSigningIn}>
+            <TouchableOpacity accessibilityRole="button" activeOpacity={0.82} style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={!canSubmitNoGoogle}>
               <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion…' : 'Connexion sans Google'}</Text>
             </TouchableOpacity>
+            {noGoogleError ? <Text style={styles.errorText}>{noGoogleError}</Text> : null}
             <Text style={styles.formHint}>Vet’Help ignore les majuscules, accents, espaces et séparateurs du numéro pour éviter les doublons.</Text>
           </View>
 
@@ -235,6 +242,7 @@ const styles = StyleSheet.create({
   noGoogleTitle: { color: '#0f172a', fontWeight: '900', fontSize: 16 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, padding: 13, color: '#0f172a', fontSize: 16 },
   formHint: { color: '#64748b', fontSize: 12, lineHeight: 17 },
+  errorText: { color: '#b91c1c', fontSize: 12, fontWeight: '800', lineHeight: 17 },
   disabledButton: { opacity: 0.5 },
   googleText: { color: '#fff', fontWeight: '900', fontSize: 16 },
   redirectHint: { color: '#64748b', fontSize: 12, lineHeight: 17 },

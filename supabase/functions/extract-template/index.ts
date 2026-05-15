@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
           {
             role: 'user',
             content: [
-              { type: 'text', text: 'Analyse cette image et retourne uniquement un JSON valide: {"name":"...", "sections":[{"id":"slug", "title":"...", "instruction":"..."}]}. Les instructions doivent dire comment remplir chaque rubrique depuis une transcription.' },
+              { type: 'text', text: 'Analyse cette image et retourne uniquement un JSON valide: {"name":"...", "description":"consignes globales si présentes", "sections":[{"id":"slug", "title":"...", "instruction":"..."}]}. Les instructions doivent dire comment remplir chaque rubrique depuis une transcription.' },
               { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
             ],
           },

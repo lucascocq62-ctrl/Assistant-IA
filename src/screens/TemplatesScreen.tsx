@@ -1,70 +1,123 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { defaultTemplates } from '../lib/templates';
+import { buildSectionsFromTemplateText, defaultTemplates } from '../lib/templates';
 import { supabase } from '../lib/supabase';
 import { ConsultationTemplate, TemplateSection } from '../lib/types';
 
 const emptySection = (): TemplateSection => ({ id: Math.random().toString(36).slice(2), title: '', instruction: '' });
 
+const cleanSections = (sections: TemplateSection[]) =>
+  sections
+    .map((section) => ({ ...section, title: section.title.trim(), instruction: section.instruction.trim() }))
+    .filter((section) => section.title && section.instruction);
+
 export function TemplatesScreen() {
   const [templates, setTemplates] = useState<ConsultationTemplate[]>(defaultTemplates);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [templateText, setTemplateText] = useState('');
   const [sections, setSections] = useState<TemplateSection[]>([emptySection()]);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  const resetForm = () => {
+    setEditingTemplateId(null);
+    setName('');
+    setDescription('');
+    setTemplateText('');
+    setSections([emptySection()]);
+  };
+
+  const loadTemplates = async () => {
+    const { data, error } = await supabase
+      .from('consultation_templates')
+      .select('id, name, description, sections, created_at')
+      .order('created_at', { ascending: false });
+
+    if (!error && data?.length) {
+      setTemplates([...(data as ConsultationTemplate[]), ...defaultTemplates]);
+    } else {
+      setTemplates(defaultTemplates);
+    }
+    setIsLoading(false);
+  };
+
   useEffect(() => {
-    const loadTemplates = async () => {
-      const { data, error } = await supabase
-        .from('consultation_templates')
-        .select('id, name, description, sections, created_at')
-        .order('created_at', { ascending: false });
-
-      if (!error && data?.length) {
-        setTemplates([...(data as ConsultationTemplate[]), ...defaultTemplates]);
-      }
-      setIsLoading(false);
-    };
-
     void loadTemplates();
   }, []);
 
   const addSection = () => setSections((current) => [...current, emptySection()]);
 
+  const removeSection = (id: string) => setSections((current) => (current.length === 1 ? [emptySection()] : current.filter((section) => section.id !== id)));
+
   const updateSection = (id: string, patch: Partial<TemplateSection>) =>
     setSections((current) => current.map((section) => (section.id === id ? { ...section, ...patch } : section)));
 
+  const applyTemplateText = () => {
+    const parsedSections = buildSectionsFromTemplateText(templateText);
+    if (!parsedSections.length) {
+      Alert.alert('Base vide', 'Colle ton modèle texte avec une rubrique par ligne avant de le convertir.');
+      return;
+    }
+
+    setSections(parsedSections);
+  };
+
+  const editTemplate = (template: ConsultationTemplate) => {
+    setEditingTemplateId(template.id.length === 36 ? template.id : null);
+    setName(template.name);
+    setDescription(template.description ?? '');
+    setTemplateText('');
+    setSections(template.sections.length ? template.sections : [emptySection()]);
+  };
+
   const saveTemplate = async () => {
-    const cleanedSections = sections.filter((section) => section.title.trim() && section.instruction.trim());
+    const cleanedSections = cleanSections(sections);
     if (!name.trim() || cleanedSections.length === 0) {
       Alert.alert('Modèle incomplet', 'Ajoute un nom et au moins une rubrique avec consigne.');
       return;
     }
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) {
-      Alert.alert('Connexion requise', 'Connecte-toi avec Google avant d’ajouter un modèle.');
+      Alert.alert('Connexion requise', 'Connecte-toi avant d’ajouter un modèle. La connexion sans Google fonctionne aussi.');
       return;
     }
 
-    const { data, error } = await supabase
-      .from('consultation_templates')
-      .insert({
-        user_id: userData.user.id,
-        name: name.trim(),
-        sections: cleanedSections,
-      })
-      .select('id, name, description, sections, created_at')
-      .single();
+    setIsSaving(true);
+    const payload = {
+      user_id: userData.user.id,
+      name: name.trim(),
+      description: description.trim() || null,
+      sections: cleanedSections,
+    };
+
+    const query = editingTemplateId
+      ? supabase
+          .from('consultation_templates')
+          .update(payload)
+          .eq('id', editingTemplateId)
+          .select('id, name, description, sections, created_at')
+          .single()
+      : supabase
+          .from('consultation_templates')
+          .insert(payload)
+          .select('id, name, description, sections, created_at')
+          .single();
+
+    const { data, error } = await query;
+    setIsSaving(false);
 
     if (error) {
       Alert.alert('Sauvegarde impossible', error.message);
       return;
     }
 
-    setTemplates((current) => [data as ConsultationTemplate, ...current]);
-    setName('');
-    setSections([emptySection()]);
+    const savedTemplate = data as ConsultationTemplate;
+    setTemplates((current) => [savedTemplate, ...current.filter((template) => template.id !== savedTemplate.id && template.id !== editingTemplateId)]);
+    resetForm();
   };
 
   const extractFromPhoto = async () => {
@@ -82,7 +135,10 @@ export function TemplatesScreen() {
         body: { imageBase64: result.assets[0].base64, mimeType: result.assets[0].mimeType ?? 'image/jpeg' },
       });
       if (error) throw error;
+      setEditingTemplateId(null);
       setName(data.name ?? 'Modèle importé');
+      setDescription(data.description ?? '');
+      setTemplateText('');
       setSections(data.sections?.length ? data.sections : [emptySection()]);
     } catch (error) {
       Alert.alert('Extraction impossible', error instanceof Error ? error.message : 'Vérifie la configuration OpenAI.');
@@ -93,14 +149,40 @@ export function TemplatesScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Créer un modèle</Text>
-      <Pressable style={styles.photoButton} onPress={extractFromPhoto} disabled={isExtracting}>
+      <Text style={styles.title}>{editingTemplateId ? 'Modifier un modèle' : 'Créer un modèle'}</Text>
+      <Text style={styles.helper}>
+        Ajoute une base de compte rendu : l’IA utilisera ces rubriques et consignes pour remplir automatiquement le compte rendu depuis la transcription.
+      </Text>
+      <Pressable style={[styles.photoButton, isExtracting && styles.disabled]} onPress={extractFromPhoto} disabled={isExtracting}>
         <Text style={styles.photoText}>{isExtracting ? 'Extraction en cours…' : 'Importer depuis une photo'}</Text>
       </Pressable>
       <TextInput style={styles.input} placeholder="Nom du modèle" value={name} onChangeText={setName} />
+      <TextInput
+        style={[styles.input, styles.textArea]}
+        multiline
+        placeholder="Consignes globales ou base libre du modèle (facultatif)"
+        value={description}
+        onChangeText={setDescription}
+      />
+      <TextInput
+        style={[styles.input, styles.textArea]}
+        multiline
+        placeholder="Coller un modèle texte, une rubrique par ligne. Exemple : Examen clinique : constantes, palpation, auscultation…"
+        value={templateText}
+        onChangeText={setTemplateText}
+      />
+      <Pressable style={styles.secondaryButton} onPress={applyTemplateText}>
+        <Text style={styles.secondaryText}>Convertir le texte en rubriques</Text>
+      </Pressable>
+
       {sections.map((section, index) => (
         <View key={section.id} style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Rubrique {index + 1}</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Rubrique {index + 1}</Text>
+            <Pressable onPress={() => removeSection(section.id)}>
+              <Text style={styles.removeText}>Supprimer</Text>
+            </Pressable>
+          </View>
           <TextInput style={styles.input} placeholder="Titre" value={section.title} onChangeText={(title) => updateSection(section.id, { title })} />
           <TextInput
             style={[styles.input, styles.textArea]}
@@ -114,16 +196,25 @@ export function TemplatesScreen() {
       <Pressable style={styles.secondaryButton} onPress={addSection}>
         <Text style={styles.secondaryText}>Ajouter une rubrique</Text>
       </Pressable>
-      <Pressable style={styles.primaryButton} onPress={saveTemplate}>
-        <Text style={styles.primaryText}>Enregistrer le modèle</Text>
+      <Pressable style={[styles.primaryButton, isSaving && styles.disabled]} onPress={saveTemplate} disabled={isSaving}>
+        <Text style={styles.primaryText}>{isSaving ? 'Enregistrement…' : editingTemplateId ? 'Mettre à jour le modèle' : 'Enregistrer le modèle'}</Text>
       </Pressable>
+      {editingTemplateId ? (
+        <Pressable style={styles.cancelButton} onPress={resetForm}>
+          <Text style={styles.cancelText}>Annuler la modification</Text>
+        </Pressable>
+      ) : null}
 
       <Text style={styles.title}>Modèles disponibles</Text>
       {isLoading && <Text style={styles.templateMeta}>Chargement des modèles Supabase…</Text>}
       {templates.map((template) => (
         <View key={template.id} style={styles.templateCard}>
           <Text style={styles.templateName}>{template.name}</Text>
+          {template.description ? <Text style={styles.templateDescription}>{template.description}</Text> : null}
           <Text style={styles.templateMeta}>{template.sections.length} rubriques</Text>
+          <Pressable style={styles.smallButton} onPress={() => editTemplate(template)}>
+            <Text style={styles.smallButtonText}>{template.id.length === 36 ? 'Modifier' : 'Utiliser comme base'}</Text>
+          </Pressable>
         </View>
       ))}
     </ScrollView>
@@ -134,17 +225,26 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   content: { padding: 20, gap: 12 },
   title: { fontSize: 22, fontWeight: '900', color: '#0f172a', marginTop: 10 },
+  helper: { color: '#475569', lineHeight: 21 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, padding: 14, fontSize: 16 },
   textArea: { minHeight: 92, textAlignVertical: 'top' },
-  sectionCard: { gap: 10, padding: 12, borderRadius: 14, backgroundColor: '#e2e8f0' },
-  sectionTitle: { fontWeight: '800', color: '#334155' },
-  photoButton: { backgroundColor: '#7c3aed', padding: 14, borderRadius: 14, alignItems: 'center' },
-  photoText: { color: '#fff', fontWeight: '800' },
+  photoButton: { backgroundColor: '#0f172a', padding: 14, borderRadius: 12, alignItems: 'center' },
+  photoText: { color: '#fff', fontWeight: '900' },
+  sectionCard: { backgroundColor: '#fff', padding: 14, borderRadius: 14, gap: 10, borderWidth: 1, borderColor: '#dbeafe' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  sectionTitle: { color: '#0f172a', fontWeight: '900' },
+  removeText: { color: '#dc2626', fontWeight: '800' },
   primaryButton: { backgroundColor: '#2563eb', padding: 16, borderRadius: 14, alignItems: 'center' },
-  primaryText: { color: '#fff', fontWeight: '800' },
-  secondaryButton: { backgroundColor: '#e0f2fe', padding: 14, borderRadius: 14, alignItems: 'center' },
-  secondaryText: { color: '#0369a1', fontWeight: '800' },
-  templateCard: { padding: 14, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1' },
-  templateName: { fontWeight: '800', color: '#0f172a' },
-  templateMeta: { color: '#64748b', marginTop: 4 },
+  primaryText: { color: '#fff', fontWeight: '900' },
+  secondaryButton: { backgroundColor: '#e0f2fe', padding: 14, borderRadius: 12, alignItems: 'center' },
+  secondaryText: { color: '#0369a1', fontWeight: '900' },
+  cancelButton: { padding: 12, alignItems: 'center' },
+  cancelText: { color: '#64748b', fontWeight: '900' },
+  disabled: { opacity: 0.5 },
+  templateCard: { backgroundColor: '#fff', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#cbd5e1', gap: 6 },
+  templateName: { fontWeight: '900', color: '#0f172a' },
+  templateDescription: { color: '#475569', lineHeight: 20 },
+  templateMeta: { color: '#64748b' },
+  smallButton: { alignSelf: 'flex-start', backgroundColor: '#f1f5f9', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, marginTop: 4 },
+  smallButtonText: { color: '#0f172a', fontWeight: '900' },
 });

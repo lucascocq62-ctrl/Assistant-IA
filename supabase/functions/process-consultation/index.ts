@@ -7,7 +7,7 @@ const corsHeaders = {
 
 type TranscriptionProvider = 'groq' | 'openai';
 type TemplateSection = { id: string; title: string; instruction: string };
-type ConsultationTemplate = { id?: string; name: string; sections: TemplateSection[] };
+type ConsultationTemplate = { id?: string; name: string; description?: string | null; sections: TemplateSection[] };
 
 type RequestBody = {
   consultationId: string;
@@ -149,7 +149,10 @@ async function transcribeAudio(audio: Blob, provider: TranscriptionProvider) {
 
 async function draftReport(args: { transcription: string; template: ConsultationTemplate; patient: RequestBody['patient']; reportModel: string }) {
   const sections = args.template.sections.map((section, index) => `${index + 1}. ${section.title}: ${section.instruction}`).join('\n');
-  const prompt = `Tu es assistant de rédaction pour un vétérinaire français. Rédige un compte rendu clair, factuel et relisible par le praticien. N'invente aucune donnée. Si une information manque, écris "Non précisé".\n\nAnimal: ${args.patient.name}\nPropriétaire: ${args.patient.ownerName || 'Non précisé'}\nEspèce/race: ${args.patient.species || 'Non précisé'}\n\nModèle à remplir:\n${sections}\n\nTranscription:\n${args.transcription}\n\nRéponds obligatoirement avec un JSON valide de forme {"markdown":"...", "sections": [{"title":"...", "content":"..."}], "warnings": []}.`;
+  const templateInstructions = args.template.description?.trim()
+    ? `Consignes globales du modèle « ${args.template.name} »:\n${args.template.description.trim()}\n\nRubriques à remplir:\n${sections}`
+    : `Rubriques à remplir pour le modèle « ${args.template.name} »:\n${sections}`;
+  const prompt = `Tu es assistant de rédaction pour un vétérinaire français. Rédige un compte rendu clair, factuel et relisible par le praticien. N'invente aucune donnée. Si une information manque, écris "Non précisé".\n\nAnimal: ${args.patient.name}\nPropriétaire: ${args.patient.ownerName || 'Non précisé'}\nEspèce/race: ${args.patient.species || 'Non précisé'}\n\nModèle à remplir:\n${templateInstructions}\n\nTranscription:\n${args.transcription}\n\nRéponds obligatoirement avec un JSON valide de forme {"markdown":"...", "sections": [{"title":"...", "content":"..."}], "warnings": []}.`;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

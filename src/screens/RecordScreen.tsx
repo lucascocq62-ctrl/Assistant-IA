@@ -138,6 +138,7 @@ export function RecordScreen({ navigation }: Props) {
           onPress={() => setTemplate(candidate)}
         >
           <Text style={styles.cardTitle}>{candidate.name}</Text>
+          {candidate.description ? <Text style={styles.cardText}>{candidate.description}</Text> : null}
           <Text style={styles.cardText}>{candidate.sections.length} rubriques seront remplies par OpenAI.</Text>
         </Pressable>
       ))}

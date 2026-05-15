@@ -1,4 +1,5 @@
 import { Linking, Platform } from 'react-native';
+import type { Session } from '@supabase/supabase-js';
 import type { VetProfile } from './types';
 import { assertSupabaseConfigured, supabase } from './supabase';
 
@@ -68,9 +69,13 @@ export const signInWithoutGoogle = async (firstName: string, orderNumber: string
     throw new Error('Renseigne un prénom et un numéro d’ordre.');
   }
 
+  let activeSession: Session | null = null;
   const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session) {
-    const { error } = await supabase.auth.signInAnonymously({
+
+  if (sessionData.session) {
+    activeSession = sessionData.session;
+  } else {
+    const { data: anonymousData, error } = await supabase.auth.signInAnonymously({
       options: {
         data: {
           first_name: cleanFirstName,
@@ -80,6 +85,16 @@ export const signInWithoutGoogle = async (firstName: string, orderNumber: string
       },
     });
     if (error) throw error;
+    activeSession = anonymousData.session;
+  }
+
+  if (!activeSession) {
+    const { data: refreshedSession } = await supabase.auth.getSession();
+    activeSession = refreshedSession.session;
+  }
+
+  if (!activeSession) {
+    throw new Error('La session sans Google n’a pas pu être créée. Vérifie que les connexions anonymes Supabase sont activées.');
   }
 
   const { data, error } = await supabase.rpc('get_or_create_vet_profile', {
@@ -88,5 +103,5 @@ export const signInWithoutGoogle = async (firstName: string, orderNumber: string
   });
 
   if (error) throw error;
-  return data as VetProfile;
+  return { profile: data as VetProfile, session: activeSession };
 };
