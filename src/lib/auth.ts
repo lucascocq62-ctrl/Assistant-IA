@@ -1,19 +1,31 @@
 import { Linking, Platform } from 'react-native';
-import { supabase } from './supabase';
+import { assertSupabaseConfigured, supabase } from './supabase';
+
+const nativeRedirectUrl = 'vethelp://auth/callback';
+
+const getConfiguredRedirectUrl = () => process.env.EXPO_PUBLIC_AUTH_REDIRECT_URL?.trim();
 
 const getRedirectUrl = () => {
+  const configuredRedirectUrl = getConfiguredRedirectUrl();
+  if (configuredRedirectUrl) return configuredRedirectUrl;
+
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     return window.location.origin;
   }
 
-  return 'assistantiaveto://auth/callback';
+  return nativeRedirectUrl;
 };
 
+export const getGoogleRedirectUrl = getRedirectUrl;
+
 export const signInWithGoogle = async () => {
+  assertSupabaseConfigured();
+
+  const redirectTo = getRedirectUrl();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: getRedirectUrl(),
+      redirectTo,
       skipBrowserRedirect: Platform.OS !== 'web',
       queryParams: {
         access_type: 'offline',
@@ -30,7 +42,6 @@ export const signInWithGoogle = async () => {
 };
 
 export const signOut = () => supabase.auth.signOut();
-
 
 export const completeOAuthSignIn = async (url: string) => {
   const parsedUrl = new URL(url);

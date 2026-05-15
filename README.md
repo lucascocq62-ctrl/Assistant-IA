@@ -1,6 +1,6 @@
-# Assistant IA Veto
+# Vet'Help
 
-Application mobile autonome pour générer un compte rendu de consultation vétérinaire à partir d'un enregistrement audio.
+Vet'Help est une application mobile autonome pour générer un compte rendu de consultation vétérinaire à partir d'un enregistrement audio.
 
 ## Fonctionnalités
 
@@ -41,6 +41,7 @@ Renseigner dans `.env` :
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+EXPO_PUBLIC_AUTH_REDIRECT_URL=https://YOUR_VERCEL_DOMAIN.vercel.app
 ```
 
 
@@ -55,20 +56,30 @@ Dans Vercel, vérifie les paramètres suivants :
 - **Output Directory** : `dist`.
 - **Install Command** : `npm install`.
 
-Ajoute aussi ces variables d'environnement côté Vercel avant de redéployer :
+Ajoute aussi ces variables d'environnement côté Vercel avant de redéployer. `EXPO_PUBLIC_AUTH_REDIRECT_URL` doit être ton domaine Vercel public, sinon Supabase/Google peut retomber sur `localhost` :
 
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+EXPO_PUBLIC_AUTH_REDIRECT_URL=https://YOUR_VERCEL_DOMAIN.vercel.app
 ```
 
 Après modification, lance un nouveau déploiement Vercel. Si tu vois encore un 404, vérifie que le déploiement utilise bien le dernier commit et que `dist/index.html` est publié comme dossier de sortie.
+
+
+### Correction de l’erreur Google qui redirige vers localhost
+
+Si le navigateur affiche `localhost n’autorise pas la connexion` après le clic sur Google, ce n’est pas un problème du bouton : l’URL de retour OAuth pointe encore vers `localhost`. Corrige ces trois endroits puis redéploie :
+
+1. Dans Vercel > Project Settings > Environment Variables, ajoute `EXPO_PUBLIC_AUTH_REDIRECT_URL=https://TON-DOMAINE.vercel.app`.
+2. Dans Supabase > Authentication > URL Configuration, mets **Site URL** à `https://TON-DOMAINE.vercel.app`.
+3. Dans Supabase > Authentication > URL Configuration > Redirect URLs, ajoute `https://TON-DOMAINE.vercel.app` et, pour mobile, `vethelp://auth/callback`.
 
 ## Configuration Supabase
 
 1. Créer un projet Supabase.
 2. Activer **Google** dans Supabase Auth > Providers.
-3. Ajouter les URL de redirection Supabase/Auth : `https://TON-DOMAINE.vercel.app`, `https://TON-PROJET.supabase.co/auth/v1/callback` et `assistantiaveto://auth/callback` pour mobile.
+3. Dans Supabase Auth > URL Configuration, règle **Site URL** sur `https://TON-DOMAINE.vercel.app` et ajoute les redirect URLs `https://TON-DOMAINE.vercel.app`, `https://TON-PROJET.supabase.co/auth/v1/callback` et `vethelp://auth/callback` pour mobile. Si cette étape reste sur `localhost`, Google affichera `ERR_CONNECTION_REFUSED` après connexion.
 4. Appliquer la migration :
 
 ```bash
