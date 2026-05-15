@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { ConsultationReport } from '../lib/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Report'>;
@@ -12,13 +12,24 @@ export function ReportScreen({ route }: Props) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (route.params.localReport) {
+      setReport(route.params.localReport);
+      setIsLoading(false);
+      return;
+    }
+
     const loadReport = async () => {
+      if (!route.params.consultationId || !isSupabaseConfigured) {
+        setIsLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase.from('consultations').select('*').eq('id', route.params.consultationId).single();
       if (!error) setReport(data as ConsultationReport);
       setIsLoading(false);
     };
     void loadReport();
-  }, [route.params.consultationId]);
+  }, [route.params.consultationId, route.params.localReport]);
 
   if (isLoading) {
     return (

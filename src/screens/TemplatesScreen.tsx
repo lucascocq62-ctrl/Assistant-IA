@@ -1,20 +1,29 @@
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { RootStackParamList } from '../../App';
+import { getGuestMode } from '../lib/guestMode';
+import { getLocalTemplates, saveLocalTemplate } from '../lib/localTemplates';
 import { buildSectionsFromTemplateText, defaultTemplates } from '../lib/templates';
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { ConsultationTemplate, TemplateSection } from '../lib/types';
 
+type Props = NativeStackScreenProps<RootStackParamList, 'Templates'>;
+
 const emptySection = (): TemplateSection => ({ id: Math.random().toString(36).slice(2), title: '', instruction: '' });
+const isSupabaseTemplateId = (id: string) => id.length === 36;
+const isLocalTemplateId = (id: string) => id.startsWith('local-template-');
 
 const cleanSections = (sections: TemplateSection[]) =>
   sections
     .map((section) => ({ ...section, title: section.title.trim(), instruction: section.instruction.trim() }))
     .filter((section) => section.title && section.instruction);
 
-export function TemplatesScreen() {
+export function TemplatesScreen({ route }: Props) {
   const [templates, setTemplates] = useState<ConsultationTemplate[]>(defaultTemplates);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [isGuestMode, setIsGuestMode] = useState(Boolean(route.params?.isGuest));
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [templateText, setTemplateText] = useState('');
@@ -31,7 +40,14 @@ export function TemplatesScreen() {
     setSections([emptySection()]);
   };
 
-  const loadTemplates = async () => {
+  const loadTemplates = async (guestEnabled = isGuestMode) => {
+    if (guestEnabled || !isSupabaseConfigured) {
+      const localTemplates = await getLocalTemplates();
+      setTemplates([...localTemplates, ...defaultTemplates]);
+      setIsLoading(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('consultation_templates')
       .select('id, name, description, sections, created_at')
@@ -46,8 +62,12 @@ export function TemplatesScreen() {
   };
 
   useEffect(() => {
-    void loadTemplates();
-  }, []);
+    void getGuestMode().then((enabled) => {
+      const guestEnabled = Boolean(route.params?.isGuest || enabled || !isSupabaseConfigured);
+      setIsGuestMode(guestEnabled);
+      void loadTemplates(guestEnabled);
+    });
+  }, [route.params?.isGuest]);
 
   const addSection = () => setSections((current) => [...current, emptySection()]);
 
@@ -67,7 +87,8 @@ export function TemplatesScreen() {
   };
 
   const editTemplate = (template: ConsultationTemplate) => {
-    setEditingTemplateId(template.id.length === 36 ? template.id : null);
+    const canEditTemplate = isGuestMode ? isLocalTemplateId(template.id) : isSupabaseTemplateId(template.id);
+    setEditingTemplateId(canEditTemplate ? template.id : null);
     setName(template.name);
     setDescription(template.description ?? '');
     setTemplateText('');
@@ -80,13 +101,31 @@ export function TemplatesScreen() {
       Alert.alert('Modèle incomplet', 'Ajoute un nom et au moins une rubrique avec consigne.');
       return;
     }
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) {
-      Alert.alert('Connexion requise', 'Connecte-toi avant d’ajouter un modèle. La connexion sans Google fonctionne aussi.');
+
+    setIsSaving(true);
+
+    if (isGuestMode || !isSupabaseConfigured) {
+      const savedTemplate: ConsultationTemplate = {
+        id: editingTemplateId && isLocalTemplateId(editingTemplateId) ? editingTemplateId : `local-template-${Date.now()}`,
+        name: name.trim(),
+        description: description.trim() || null,
+        sections: cleanedSections,
+        created_at: new Date().toISOString(),
+      };
+      const localTemplates = await saveLocalTemplate(savedTemplate);
+      setTemplates([...localTemplates, ...defaultTemplates]);
+      setIsSaving(false);
+      resetForm();
       return;
     }
 
-    setIsSaving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) {
+      setIsSaving(false);
+      Alert.alert('Connexion requise', 'Connecte-toi avant d’ajouter un modèle ou utilise le mode invité pour créer des modèles locaux.');
+      return;
+    }
+
     const payload = {
       user_id: userData.user.id,
       name: name.trim(),
@@ -121,6 +160,11 @@ export function TemplatesScreen() {
   };
 
   const extractFromPhoto = async () => {
+    if (!isSupabaseConfigured) {
+      Alert.alert('Import photo indisponible', 'Configure Supabase pour utiliser l’extraction OpenAI depuis une photo. Tu peux quand même coller un modèle texte en mode invité.');
+      return;
+    }
+
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Photos refusées', 'Autorise l’accès aux photos pour importer un modèle.');
@@ -149,11 +193,12 @@ export function TemplatesScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {isGuestMode ? <Text style={styles.guestBanner}>Mode invité : tes modèles sont enregistrés uniquement sur cet appareil.</Text> : null}
       <Text style={styles.title}>{editingTemplateId ? 'Modifier un modèle' : 'Créer un modèle'}</Text>
       <Text style={styles.helper}>
         Ajoute une base de compte rendu : l’IA utilisera ces rubriques et consignes pour remplir automatiquement le compte rendu depuis la transcription.
       </Text>
-      <Pressable style={[styles.photoButton, isExtracting && styles.disabled]} onPress={extractFromPhoto} disabled={isExtracting}>
+      <Pressable style={[styles.photoButton, (isExtracting || !isSupabaseConfigured) && styles.disabled]} onPress={extractFromPhoto} disabled={isExtracting}>
         <Text style={styles.photoText}>{isExtracting ? 'Extraction en cours…' : 'Importer depuis une photo'}</Text>
       </Pressable>
       <TextInput style={styles.input} placeholder="Nom du modèle" value={name} onChangeText={setName} />
@@ -206,14 +251,14 @@ export function TemplatesScreen() {
       ) : null}
 
       <Text style={styles.title}>Modèles disponibles</Text>
-      {isLoading && <Text style={styles.templateMeta}>Chargement des modèles Supabase…</Text>}
+      {isLoading && <Text style={styles.templateMeta}>{isGuestMode ? 'Chargement des modèles locaux…' : 'Chargement des modèles Supabase…'}</Text>}
       {templates.map((template) => (
         <View key={template.id} style={styles.templateCard}>
           <Text style={styles.templateName}>{template.name}</Text>
           {template.description ? <Text style={styles.templateDescription}>{template.description}</Text> : null}
           <Text style={styles.templateMeta}>{template.sections.length} rubriques</Text>
           <Pressable style={styles.smallButton} onPress={() => editTemplate(template)}>
-            <Text style={styles.smallButtonText}>{template.id.length === 36 ? 'Modifier' : 'Utiliser comme base'}</Text>
+            <Text style={styles.smallButtonText}>{(isGuestMode ? isLocalTemplateId(template.id) : isSupabaseTemplateId(template.id)) ? 'Modifier' : 'Utiliser comme base'}</Text>
           </Pressable>
         </View>
       ))}
@@ -224,6 +269,7 @@ export function TemplatesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   content: { padding: 20, gap: 12 },
+  guestBanner: { backgroundColor: '#ecfeff', borderColor: '#67e8f9', borderWidth: 1, borderRadius: 12, padding: 12, color: '#155e75', fontWeight: '800', lineHeight: 20 },
   title: { fontSize: 22, fontWeight: '900', color: '#0f172a', marginTop: 10 },
   helper: { color: '#475569', lineHeight: 21 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, padding: 14, fontSize: 16 },

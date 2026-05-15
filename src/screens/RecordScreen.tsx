@@ -6,13 +6,40 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { ProviderSelector } from '../components/ProviderSelector';
+import { getGuestMode } from '../lib/guestMode';
+import { getLocalTemplates } from '../lib/localTemplates';
 import { defaultTemplates } from '../lib/templates';
-import { supabase } from '../lib/supabase';
-import { ConsultationTemplate, TranscriptionProvider } from '../lib/types';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { ConsultationReport, ConsultationTemplate, TranscriptionProvider } from '../lib/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Record'>;
 
-export function RecordScreen({ navigation }: Props) {
+const createGuestReport = (args: {
+  patientName: string;
+  ownerName: string;
+  species: string;
+  template: ConsultationTemplate;
+  provider: TranscriptionProvider;
+}): ConsultationReport => {
+  const sections = args.template.sections.map((section) => `## ${section.title}\nNon précisé\n\n_Consigne utilisée : ${section.instruction}_`).join('\n\n');
+
+  return {
+    id: `guest-report-${Date.now()}`,
+    patient_name: args.patientName,
+    owner_name: args.ownerName || null,
+    species: args.species || null,
+    template_id: null,
+    transcription_provider: args.provider,
+    requested_by_email: 'Mode invité',
+    transcription: 'Mode invité : l’audio reste local et n’est pas envoyé à Supabase. Connecte-toi pour lancer la transcription IA.',
+    report_markdown: `# ${args.patientName}\n\n> Brouillon généré en mode invité à partir du modèle « ${args.template.name} ». Connecte-toi pour obtenir un compte rendu rempli automatiquement par l’IA.\n\n${sections}`,
+    report_json: { guest: true, template: args.template.name },
+    status: 'completed',
+    created_at: new Date().toISOString(),
+  };
+};
+
+export function RecordScreen({ navigation, route }: Props) {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [provider, setProvider] = useState<TranscriptionProvider>('groq');
@@ -21,12 +48,24 @@ export function RecordScreen({ navigation }: Props) {
   const [species, setSpecies] = useState('');
   const [template, setTemplate] = useState<ConsultationTemplate>(defaultTemplates[0]);
   const [templates, setTemplates] = useState<ConsultationTemplate[]>(defaultTemplates);
+  const [isGuestMode, setIsGuestMode] = useState(Boolean(route.params?.isGuest));
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const canSubmit = useMemo(() => Boolean(audioUri && patientName.trim() && !isSubmitting), [audioUri, patientName, isSubmitting]);
 
   useEffect(() => {
     const loadTemplates = async () => {
+      const guestEnabled = Boolean(route.params?.isGuest || (await getGuestMode()) || !isSupabaseConfigured);
+      setIsGuestMode(guestEnabled);
+
+      if (guestEnabled) {
+        const localTemplates = await getLocalTemplates();
+        const nextTemplates = [...localTemplates, ...defaultTemplates];
+        setTemplates(nextTemplates);
+        setTemplate(nextTemplates[0]);
+        return;
+      }
+
       const { data } = await supabase.from('consultation_templates').select('id, name, description, sections').order('created_at', { ascending: false });
       if (data?.length) {
         const remoteTemplates = data as ConsultationTemplate[];
@@ -35,7 +74,7 @@ export function RecordScreen({ navigation }: Props) {
       }
     };
     void loadTemplates();
-  }, []);
+  }, [route.params?.isGuest]);
 
   const startRecording = async () => {
     const permission = await Audio.requestPermissionsAsync();
@@ -57,12 +96,31 @@ export function RecordScreen({ navigation }: Props) {
     setAudioUri(uri);
   };
 
+  const submitGuestConsultation = async () => {
+    if (!audioUri) return;
+    const localReport = createGuestReport({
+      patientName: patientName.trim(),
+      ownerName: ownerName.trim(),
+      species: species.trim(),
+      template,
+      provider,
+    });
+    await FileSystem.deleteAsync(audioUri, { idempotent: true });
+    setAudioUri(null);
+    navigation.replace('Report', { localReport });
+  };
+
   const submitConsultation = async () => {
     if (!audioUri) return;
     setIsSubmitting(true);
     try {
+      if (isGuestMode || !isSupabaseConfigured) {
+        await submitGuestConsultation();
+        return;
+      }
+
       const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) throw new Error('Connecte-toi à Supabase avant de créer une consultation.');
+      if (!userData.user) throw new Error('Connecte-toi à Supabase avant de créer une consultation ou active le mode invité.');
 
       const { data: consultation, error: insertError } = await supabase
         .from('consultations')
@@ -122,6 +180,7 @@ export function RecordScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {isGuestMode ? <Text style={styles.guestBanner}>Mode invité : l’audio reste sur l’appareil. Connecte-toi pour envoyer l’audio et obtenir la transcription IA.</Text> : null}
       <Text style={styles.label}>Animal</Text>
       <TextInput style={styles.input} placeholder="Nom de l’animal *" value={patientName} onChangeText={setPatientName} />
       <TextInput style={styles.input} placeholder="Propriétaire" value={ownerName} onChangeText={setOwnerName} />
@@ -129,6 +188,7 @@ export function RecordScreen({ navigation }: Props) {
 
       <Text style={styles.label}>Transcription</Text>
       <ProviderSelector value={provider} onChange={setProvider} />
+      {isGuestMode ? <Text style={styles.helper}>Le choix sera utilisé quand tu te connecteras. En mode invité, aucun appel IA n’est lancé.</Text> : null}
 
       <Text style={styles.label}>Modèle</Text>
       {templates.map((candidate) => (
@@ -153,10 +213,10 @@ export function RecordScreen({ navigation }: Props) {
           <Text style={styles.buttonText}>{audioUri ? 'Réenregistrer' : 'Lancer l’enregistrement'}</Text>
         </Pressable>
       )}
-      {audioUri && <Text style={styles.ready}>Audio prêt. Il sera supprimé après transcription.</Text>}
+      {audioUri && <Text style={styles.ready}>{isGuestMode ? 'Audio prêt. Il restera local et sera supprimé après création du brouillon.' : 'Audio prêt. Il sera supprimé après transcription.'}</Text>}
 
       <Pressable style={[styles.submitButton, !canSubmit && styles.disabled]} disabled={!canSubmit} onPress={submitConsultation}>
-        <Text style={styles.buttonText}>{isSubmitting ? 'Traitement en cours…' : 'Transcrire et générer le compte rendu'}</Text>
+        <Text style={styles.buttonText}>{isSubmitting ? 'Traitement en cours…' : isGuestMode ? 'Créer un brouillon local' : 'Transcrire et générer le compte rendu'}</Text>
       </Pressable>
     </ScrollView>
   );
@@ -165,7 +225,9 @@ export function RecordScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   content: { padding: 20, gap: 12 },
+  guestBanner: { backgroundColor: '#ecfeff', borderColor: '#67e8f9', borderWidth: 1, borderRadius: 12, padding: 12, color: '#155e75', fontWeight: '800', lineHeight: 20 },
   label: { marginTop: 12, fontWeight: '800', color: '#0f172a', fontSize: 16 },
+  helper: { color: '#64748b', lineHeight: 20 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, padding: 14, fontSize: 16 },
   selectedCard: { borderColor: '#2563eb', backgroundColor: '#eff6ff' },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#cbd5e1' },

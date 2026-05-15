@@ -5,12 +5,13 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { RecordScreen } from './src/screens/RecordScreen';
 import { TemplatesScreen } from './src/screens/TemplatesScreen';
 import { ReportScreen } from './src/screens/ReportScreen';
+import type { ConsultationReport } from './src/lib/types';
 
 export type RootStackParamList = {
   Home: undefined;
-  Record: undefined;
-  Templates: undefined;
-  Report: { consultationId: string };
+  Record: { isGuest?: boolean } | undefined;
+  Templates: { isGuest?: boolean } | undefined;
+  Report: { consultationId?: string; localReport?: ConsultationReport };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();

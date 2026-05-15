@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { completeOAuthSignIn, getGoogleRedirectUrl, signInWithGoogle, signInWithoutGoogle, signOut } from '../lib/auth';
+import { getGuestMode, setGuestMode } from '../lib/guestMode';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { VetProfile } from '../lib/types';
 
@@ -18,11 +19,16 @@ export function HomeScreen({ navigation }: Props) {
   const [orderNumber, setOrderNumber] = useState('');
   const [vetProfile, setVetProfile] = useState<VetProfile | null>(null);
   const [noGoogleError, setNoGoogleError] = useState<string | null>(null);
+  const [isGuestMode, setIsGuestMode] = useState(false);
 
   useEffect(() => {
-    const bootstrapAuth = async () => {
+    const bootstrapAuth = async (guestEnabled: boolean) => {
       if (!isSupabaseConfigured) {
-        setAuthStatus('Configuration Supabase manquante : ajoute les variables Vercel puis redéploie.');
+        setAuthStatus(
+          guestEnabled
+            ? 'Mode invité : accès sans authentification. Les données restent locales.'
+            : 'Configuration Supabase manquante : tu peux tout de même entrer en mode invité.',
+        );
         return;
       }
 
@@ -32,12 +38,18 @@ export function HomeScreen({ navigation }: Props) {
         setAuthStatus('Connecté avec Google');
       } else if (data.session) {
         setAuthStatus('Connecté sans Google');
+      } else if (guestEnabled) {
+        setAuthStatus('Mode invité : accès sans authentification. Les données restent locales.');
       } else {
-        setAuthStatus('Connecte-toi avec Google ou avec ton numéro d’ordre.');
+        setAuthStatus('Connecte-toi avec Google, avec ton numéro d’ordre ou continue en mode invité.');
       }
     };
 
-    void bootstrapAuth();
+    void getGuestMode().then((enabled) => {
+      setIsGuestMode(enabled);
+      void bootstrapAuth(enabled);
+    });
+
     const handleUrl = async ({ url }: { url: string }) => {
       try {
         await completeOAuthSignIn(url);
@@ -58,7 +70,7 @@ export function HomeScreen({ navigation }: Props) {
       } else if (nextSession) {
         setAuthStatus('Connecté sans Google');
       } else {
-        setAuthStatus('Connecte-toi avec Google ou avec ton numéro d’ordre.');
+        setAuthStatus('Connecte-toi avec Google, avec ton numéro d’ordre ou continue en mode invité.');
         setVetProfile(null);
       }
     });
@@ -103,6 +115,8 @@ export function HomeScreen({ navigation }: Props) {
       const { profile, session: nextSession } = await signInWithoutGoogle(firstName, orderNumber);
       setSession(nextSession);
       setVetProfile(profile);
+      setIsGuestMode(false);
+      await setGuestMode(false);
       setAuthStatus(`Connecté sans Google : ${profile.first_name} · n° ${profile.order_number}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.';
@@ -113,13 +127,23 @@ export function HomeScreen({ navigation }: Props) {
     }
   };
 
-  const handleSignOut = async () => {
+  const handleGuestAccess = async () => {
+    await setGuestMode(true);
+    setIsGuestMode(true);
     setVetProfile(null);
-    await signOut();
+    setAuthStatus('Mode invité : accès sans authentification. Les données restent locales.');
   };
 
-  const connectedLabel = session?.user.email ?? (vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : 'Connexion sans Google');
-  const canUseApp = Boolean(session);
+  const handleSignOut = async () => {
+    setVetProfile(null);
+    setIsGuestMode(false);
+    await setGuestMode(false);
+    if (session) await signOut();
+    setSession(null);
+  };
+
+  const connectedLabel = session?.user.email ?? (vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : 'Mode invité (sans compte)');
+  const canUseApp = Boolean(session || isGuestMode);
   const canSubmitNoGoogle = Boolean(firstName.trim() && orderNumber.trim() && !isNoGoogleSigningIn);
 
   return (
@@ -149,16 +173,16 @@ export function HomeScreen({ navigation }: Props) {
 
       {canUseApp ? (
         <View style={styles.actionCard}>
-          <Text style={styles.userLabel}>Compte connecté</Text>
+          <Text style={styles.userLabel}>{isGuestMode && !session ? 'Accès sans authentification' : 'Compte connecté'}</Text>
           <Text style={styles.userEmail}>{connectedLabel}</Text>
-          <Pressable style={styles.primaryButton} onPress={() => navigation.navigate('Record')}>
+          <Pressable style={styles.primaryButton} onPress={() => navigation.navigate('Record', { isGuest: isGuestMode && !session })}>
             <Text style={styles.primaryText}>Démarrer une consultation</Text>
           </Pressable>
-          <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate('Templates')}>
+          <Pressable style={styles.secondaryButton} onPress={() => navigation.navigate('Templates', { isGuest: isGuestMode && !session })}>
             <Text style={styles.secondaryText}>Créer ou modifier mes modèles</Text>
           </Pressable>
           <Pressable style={styles.logoutButton} onPress={handleSignOut}>
-            <Text style={styles.logoutText}>Se déconnecter</Text>
+            <Text style={styles.logoutText}>{isGuestMode && !session ? 'Quitter le mode invité' : 'Se déconnecter'}</Text>
           </Pressable>
         </View>
       ) : (
@@ -174,6 +198,11 @@ export function HomeScreen({ navigation }: Props) {
             <Text style={styles.separatorText}>ou</Text>
             <View style={styles.separatorLine} />
           </View>
+
+          <Pressable accessibilityRole="button" style={styles.guestButton} onPress={handleGuestAccess}>
+            <Text style={styles.guestText}>Accéder sans authentification</Text>
+            <Text style={styles.guestHint}>Mode invité : modèles locaux et compte rendu brouillon, sans sauvegarde Supabase.</Text>
+          </Pressable>
 
           <View style={styles.noGoogleForm}>
             <Text style={styles.noGoogleTitle}>Connexion sans Google</Text>
@@ -236,6 +265,9 @@ const styles = StyleSheet.create({
   separatorRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
   separatorLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
   separatorText: { color: '#64748b', fontWeight: '800' },
+  guestButton: { backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#67e8f9', padding: 14, borderRadius: 14, gap: 4 },
+  guestText: { color: '#155e75', fontWeight: '900', fontSize: 15, textAlign: 'center' },
+  guestHint: { color: '#0e7490', fontSize: 12, lineHeight: 17, textAlign: 'center' },
   noGoogleButton: { backgroundColor: '#2563eb', padding: 15, borderRadius: 14, alignItems: 'center' },
   noGoogleText: { color: '#fff', fontWeight: '900', fontSize: 15 },
   noGoogleForm: { gap: 10, backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#e2e8f0' },

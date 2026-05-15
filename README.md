@@ -12,7 +12,7 @@ Vet'Help est une application mobile autonome pour générer un compte rendu de c
 - Suppression automatique de l'audio côté mobile et dans Supabase Storage dès que la transcription est terminée.
 - Modèles de consultation configurables avec rubriques et consignes.
 - Import d'un modèle depuis une photo via une Edge Function OpenAI multimodale.
-- Authentification Google via Supabase, ou connexion sans Google avec prénom + numéro d’ordre.
+- Authentification Google via Supabase, connexion sans Google avec prénom + numéro d’ordre, ou accès invité sans authentification.
 - Base de données Supabase avec profils Google, profils vétérinaires sans Google, demandes de génération, consultations, modèles et RLS par utilisateur.
 
 ## Architecture
@@ -103,6 +103,20 @@ supabase secrets set OPENAI_REPORT_MODEL=gpt-5.4-nano
 supabase secrets set OPENAI_TEMPLATE_MODEL=gpt-5.4-nano
 ```
 
+
+
+### Mode invité sans authentification
+
+Le bouton **Accéder sans authentification** permet d’ouvrir l’application sans compte Supabase. Ce mode sert à tester l’interface, préparer des modèles et créer un brouillon local de compte rendu.
+
+En mode invité :
+
+- les modèles créés sont stockés localement sur l’appareil avec `AsyncStorage` ;
+- l’audio n’est pas envoyé à Supabase et reste sur l’appareil ;
+- aucun appel de transcription ou de rédaction IA n’est lancé ;
+- le compte rendu généré est un brouillon structuré avec les rubriques du modèle et doit être complété manuellement, ou régénéré après connexion.
+
+Pour obtenir un compte rendu rempli automatiquement par l’IA, il faut se connecter avec Google ou avec le prénom + numéro d’ordre.
 
 
 ### Connexion sans Google
