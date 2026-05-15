@@ -5,6 +5,8 @@ import { assertSupabaseConfigured, supabase } from './supabase';
 const authTimeoutMs = 15000;
 const profileTimeoutMs = 15000;
 
+export type VetProfileSignInMode = 'create' | 'existing';
+
 export const signOut = () => supabase.auth.signOut();
 
 const normalizeVetFirstName = (value: string) =>
@@ -55,6 +57,14 @@ const toFriendlyAuthError = (error: unknown) => {
   const message = getErrorMessage(error);
   const lowerMessage = message.toLowerCase();
 
+  if (message.includes('PROFIL_EXISTE_DEJA')) {
+    return new Error('Un profil existe déjà avec ce prénom et ce numéro d’ordre. Utilise plutôt « J’ai déjà un profil ».');
+  }
+
+  if (message.includes('PROFIL_INTROUVABLE')) {
+    return new Error('Aucun profil ne correspond à ce prénom et ce numéro d’ordre. Vérifie les informations ou crée un nouveau profil.');
+  }
+
   if (lowerMessage.includes('anonymous') || lowerMessage.includes('signups not allowed') || lowerMessage.includes('signup is disabled')) {
     return new Error('Les connexions anonymes Supabase ne sont pas activées. Va dans Supabase > Authentication > Providers et active Anonymous sign-ins, puis redéploie si nécessaire.');
   }
@@ -63,8 +73,8 @@ const toFriendlyAuthError = (error: unknown) => {
     return new Error('Impossible de joindre Supabase. Vérifie la connexion internet, EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans Vercel, puis redéploie.');
   }
 
-  if (lowerMessage.includes('get_or_create_vet_profile') || lowerMessage.includes('function') || lowerMessage.includes('schema cache')) {
-    return new Error('La fonction Supabase get_or_create_vet_profile est introuvable ou pas encore chargée. Applique les migrations avec supabase db push, puis réessaie.');
+  if (lowerMessage.includes('create_vet_profile') || lowerMessage.includes('verify_vet_profile') || lowerMessage.includes('get_or_create_vet_profile') || lowerMessage.includes('function') || lowerMessage.includes('schema cache')) {
+    return new Error('Les fonctions Supabase de profil vétérinaire sont introuvables ou pas encore chargées. Applique les migrations avec supabase db push, puis réessaie.');
   }
 
   if (lowerMessage.includes('permission denied') || lowerMessage.includes('row-level security') || lowerMessage.includes('rls')) {
@@ -76,82 +86,6 @@ const toFriendlyAuthError = (error: unknown) => {
   }
 
   return error instanceof Error ? error : new Error(message);
-};
-
-const buildLocalVetProfile = (session: Session, firstName: string, orderNumber: string): VetProfile => ({
-  id: session.user.id,
-  first_name: firstName,
-  order_number: orderNumber,
-  normalized_first_name: normalizeVetFirstName(firstName),
-  normalized_order_number: normalizeVetOrderNumber(orderNumber),
-  created_by_user_id: session.user.id,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-});
-
-const callVetProfileRpc = async (firstName: string, orderNumber: string) => {
-  const { data, error } = await withTimeout(
-    supabase.rpc('get_or_create_vet_profile', {
-      profile_first_name: firstName,
-      profile_order_number: orderNumber,
-    }),
-    profileTimeoutMs,
-    'Délai dépassé pendant la création du profil vétérinaire.',
-  );
-
-  if (error) throw error;
-  if (!data) throw new Error('Supabase n’a retourné aucun profil vétérinaire. Vérifie la fonction get_or_create_vet_profile.');
-
-  return data as VetProfile;
-};
-
-const upsertVetProfileDirectly = async (session: Session, firstName: string, orderNumber: string) => {
-  const profile = buildLocalVetProfile(session, firstName, orderNumber);
-  const { data, error } = await withTimeout(
-    supabase
-      .from('vet_profiles')
-      .upsert(
-        {
-          first_name: profile.first_name,
-          order_number: profile.order_number,
-          normalized_first_name: profile.normalized_first_name,
-          normalized_order_number: profile.normalized_order_number,
-          created_by_user_id: session.user.id,
-          updated_at: profile.updated_at,
-        },
-        { onConflict: 'normalized_first_name,normalized_order_number' },
-      )
-      .select('*')
-      .single(),
-    profileTimeoutMs,
-    'Délai dépassé pendant la sauvegarde directe du profil vétérinaire.',
-  );
-
-  if (error) throw error;
-  if (!data) throw new Error('Supabase n’a retourné aucun profil vétérinaire après sauvegarde directe.');
-
-  return data as VetProfile;
-};
-
-const getOrCreateVetProfileResiliently = async (session: Session, firstName: string, orderNumber: string) => {
-  try {
-    return { profile: await callVetProfileRpc(firstName, orderNumber) };
-  } catch (rpcError) {
-    console.warn('Vet profile RPC failed, trying direct table upsert.', rpcError);
-
-    try {
-      return {
-        profile: await upsertVetProfileDirectly(session, firstName, orderNumber),
-        warning: 'Le profil a été sauvegardé par le mode de secours car le RPC Supabase a échoué.',
-      };
-    } catch (directError) {
-      console.warn('Direct vet profile upsert failed, using session metadata fallback.', directError);
-      return {
-        profile: buildLocalVetProfile(session, firstName, orderNumber),
-        warning: `${toFriendlyAuthError(rpcError).message} Connexion maintenue avec le profil de session local.`,
-      };
-    }
-  }
 };
 
 const getSessionAfterAnonymousSignIn = async (fallbackSession: Session | null) => {
@@ -175,13 +109,14 @@ const clearPartialSession = async () => {
   }
 };
 
-const updateAnonymousUserMetadata = async (firstName: string, orderNumber: string) => {
+const updateAnonymousUserMetadata = async (firstName: string, orderNumber: string, mode: VetProfileSignInMode) => {
   const { error } = await withTimeout(
     supabase.auth.updateUser({
       data: {
         first_name: firstName,
         order_number: orderNumber,
         sign_in_method: 'without_google',
+        vet_profile_mode: mode,
       },
     }),
     authTimeoutMs,
@@ -191,6 +126,55 @@ const updateAnonymousUserMetadata = async (firstName: string, orderNumber: strin
   if (error) {
     console.warn('Unable to persist no-Google auth metadata on Supabase user.', error);
   }
+};
+
+const createAnonymousSession = async (firstName: string, orderNumber: string, mode: VetProfileSignInMode) => {
+  await clearPartialSession();
+
+  const { data: anonymousData, error: anonymousError } = await withTimeout(
+    supabase.auth.signInAnonymously({
+      options: {
+        data: {
+          first_name: firstName,
+          order_number: orderNumber,
+          sign_in_method: 'without_google',
+          vet_profile_mode: mode,
+        },
+      },
+    }),
+    authTimeoutMs,
+    'Délai dépassé pendant la connexion anonyme Supabase.',
+  );
+
+  if (anonymousError) throw anonymousError;
+
+  const activeSession = await getSessionAfterAnonymousSignIn(anonymousData.session);
+
+  if (!activeSession) {
+    throw new Error('La session sans Google n’a pas pu être créée. Vérifie que les connexions anonymes Supabase sont activées.');
+  }
+
+  return activeSession;
+};
+
+const callVetProfileAction = async (firstName: string, orderNumber: string, mode: VetProfileSignInMode) => {
+  const functionName = mode === 'create' ? 'create_vet_profile' : 'verify_vet_profile';
+  const timeoutMessage = mode === 'create' ? 'Délai dépassé pendant la création du profil vétérinaire.' : 'Délai dépassé pendant la vérification du profil vétérinaire.';
+  const { data, error } = await withTimeout(
+    supabase.rpc(functionName, {
+      profile_first_name: firstName,
+      profile_order_number: orderNumber,
+    }),
+    profileTimeoutMs,
+    timeoutMessage,
+  );
+
+  if (error) throw error;
+  if (!data) {
+    throw new Error(mode === 'create' ? 'Supabase n’a retourné aucun profil vétérinaire après création.' : 'PROFIL_INTROUVABLE');
+  }
+
+  return data as VetProfile;
 };
 
 export const getCurrentVetProfile = async () => {
@@ -211,8 +195,11 @@ export const getCurrentVetProfile = async () => {
   const metadataOrderNumber = typeof metadata.order_number === 'string' ? metadata.order_number : '';
 
   if (metadataFirstName && metadataOrderNumber) {
-    const { profile } = await getOrCreateVetProfileResiliently(session, metadataFirstName, metadataOrderNumber);
-    return profile;
+    try {
+      return await callVetProfileAction(metadataFirstName, metadataOrderNumber, 'existing');
+    } catch (error) {
+      console.warn('Unable to verify persisted vet profile from session metadata.', error);
+    }
   }
 
   const { data, error } = await withTimeout(
@@ -231,43 +218,26 @@ export const getCurrentVetProfile = async () => {
   return data as VetProfile | null;
 };
 
-export const signInWithoutGoogle = async (firstName: string, orderNumber: string) => {
+export const signInWithVetProfile = async (firstName: string, orderNumber: string, mode: VetProfileSignInMode) => {
   assertSupabaseConfigured();
 
   const { cleanFirstName, cleanOrderNumber } = cleanNoGoogleCredentials(firstName, orderNumber);
 
   try {
-    await clearPartialSession();
-
-    const { data: anonymousData, error: anonymousError } = await withTimeout(
-      supabase.auth.signInAnonymously({
-        options: {
-          data: {
-            first_name: cleanFirstName,
-            order_number: cleanOrderNumber,
-            sign_in_method: 'without_google',
-          },
-        },
-      }),
-      authTimeoutMs,
-      'Délai dépassé pendant la connexion anonyme Supabase.',
-    );
-
-    if (anonymousError) throw anonymousError;
-
-    const activeSession = await getSessionAfterAnonymousSignIn(anonymousData.session);
-
-    if (!activeSession) {
-      throw new Error('La session sans Google n’a pas pu être créée. Vérifie que les connexions anonymes Supabase sont activées.');
-    }
-
-    await updateAnonymousUserMetadata(cleanFirstName, cleanOrderNumber);
-    const { profile, warning } = await getOrCreateVetProfileResiliently(activeSession, cleanFirstName, cleanOrderNumber);
+    const activeSession = await createAnonymousSession(cleanFirstName, cleanOrderNumber, mode);
+    await updateAnonymousUserMetadata(cleanFirstName, cleanOrderNumber, mode);
+    const profile = await callVetProfileAction(cleanFirstName, cleanOrderNumber, mode);
     const session = (await getSessionAfterAnonymousSignIn(activeSession)) ?? activeSession;
 
-    return { profile, session, warning };
+    return { profile, session };
   } catch (error) {
     await clearPartialSession();
     throw toFriendlyAuthError(error);
   }
 };
+
+export const createVetProfileAndSignIn = (firstName: string, orderNumber: string) => signInWithVetProfile(firstName, orderNumber, 'create');
+
+export const signInWithExistingVetProfile = (firstName: string, orderNumber: string) => signInWithVetProfile(firstName, orderNumber, 'existing');
+
+export const signInWithoutGoogle = signInWithExistingVetProfile;

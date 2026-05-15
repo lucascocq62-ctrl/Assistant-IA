@@ -3,7 +3,7 @@ import { Session } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
-import { getCurrentVetProfile, signInWithoutGoogle, signOut } from '../lib/auth';
+import { createVetProfileAndSignIn, getCurrentVetProfile, signInWithExistingVetProfile, signOut, type VetProfileSignInMode } from '../lib/auth';
 import { getGuestMode, setGuestMode } from '../lib/guestMode';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { VetProfile } from '../lib/types';
@@ -14,6 +14,7 @@ export function HomeScreen({ navigation }: Props) {
   const [session, setSession] = useState<Session | null>(null);
   const [authStatus, setAuthStatus] = useState('Connexion Supabase…');
   const [isNoGoogleSigningIn, setIsNoGoogleSigningIn] = useState(false);
+  const [selectedSignInMode, setSelectedSignInMode] = useState<VetProfileSignInMode>('existing');
   const [firstName, setFirstName] = useState('');
   const [orderNumber, setOrderNumber] = useState('');
   const [vetProfile, setVetProfile] = useState<VetProfile | null>(null);
@@ -67,7 +68,7 @@ export function HomeScreen({ navigation }: Props) {
   }, []);
 
 
-  const handleNoGoogleSignIn = async () => {
+  const handleNoGoogleSignIn = async (mode: VetProfileSignInMode = selectedSignInMode) => {
     if (!isSupabaseConfigured) {
       Alert.alert(
         'Configuration Supabase manquante',
@@ -80,13 +81,14 @@ export function HomeScreen({ navigation }: Props) {
     setAuthStatus('Connexion à Supabase…');
     try {
       setNoGoogleError(null);
-      const { profile, session: nextSession, warning } = await signInWithoutGoogle(firstName, orderNumber);
+      const { profile, session: nextSession } = mode === 'create'
+        ? await createVetProfileAndSignIn(firstName, orderNumber)
+        : await signInWithExistingVetProfile(firstName, orderNumber);
       setSession(nextSession);
       setVetProfile(profile);
       setIsGuestMode(false);
       await setGuestMode(false);
-      setAuthStatus(warning ? `Connecté : ${profile.first_name} · n° ${profile.order_number} (profil de secours)` : `Connecté : ${profile.first_name} · n° ${profile.order_number}`);
-      if (warning) setNoGoogleError(warning);
+      setAuthStatus(mode === 'create' ? `Nouveau profil créé : ${profile.first_name} · n° ${profile.order_number}` : `Profil vérifié : ${profile.first_name} · n° ${profile.order_number}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.';
       setNoGoogleError(message);
@@ -164,7 +166,7 @@ export function HomeScreen({ navigation }: Props) {
 
           <View style={styles.noGoogleForm}>
             <Text style={styles.noGoogleTitle}>Prénom + numéro d’ordre</Text>
-            <Text style={styles.formHint}>Renseigne ton prénom et ton numéro d’ordre. Si le profil existe déjà, il sera réutilisé.</Text>
+            <Text style={styles.formHint}>Choisis « Nouvelle connexion » pour créer un profil, ou « J’ai déjà un profil » pour vérifier qu’il existe avant d’entrer.</Text>
             <TextInput
               autoCapitalize="words"
               autoCorrect={false}
@@ -180,7 +182,7 @@ export function HomeScreen({ navigation }: Props) {
               autoCorrect={false}
               editable={!isNoGoogleSigningIn}
               onSubmitEditing={() => {
-                if (canSubmitNoGoogle) void handleNoGoogleSignIn();
+                if (canSubmitNoGoogle) void handleNoGoogleSignIn(selectedSignInMode);
               }}
               placeholder="Numéro d’ordre"
               returnKeyType="go"
@@ -188,8 +190,28 @@ export function HomeScreen({ navigation }: Props) {
               value={orderNumber}
               onChangeText={setOrderNumber}
             />
-            <Pressable accessibilityRole="button" style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={!canSubmitNoGoogle}>
-              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion sécurisée…' : 'Se connecter'}</Text>
+            <View style={styles.modeSelector}>
+              <Pressable
+                accessibilityRole="button"
+                style={[styles.modeButton, selectedSignInMode === 'create' && styles.selectedModeButton]}
+                onPress={() => setSelectedSignInMode('create')}
+                disabled={isNoGoogleSigningIn}
+              >
+                <Text style={[styles.modeButtonText, selectedSignInMode === 'create' && styles.selectedModeButtonText]}>Nouvelle connexion</Text>
+                <Text style={styles.modeHint}>Crée un profil vétérinaire.</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={[styles.modeButton, selectedSignInMode === 'existing' && styles.selectedModeButton]}
+                onPress={() => setSelectedSignInMode('existing')}
+                disabled={isNoGoogleSigningIn}
+              >
+                <Text style={[styles.modeButtonText, selectedSignInMode === 'existing' && styles.selectedModeButtonText]}>J’ai déjà un profil</Text>
+                <Text style={styles.modeHint}>Vérifie que le profil existe.</Text>
+              </Pressable>
+            </View>
+            <Pressable accessibilityRole="button" style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={() => handleNoGoogleSignIn(selectedSignInMode)} disabled={!canSubmitNoGoogle}>
+              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion sécurisée…' : selectedSignInMode === 'create' ? 'Créer mon profil' : 'Vérifier mon profil'}</Text>
             </Pressable>
             {noGoogleError ? <Text style={styles.errorText}>{noGoogleError}</Text> : null}
             <Text style={styles.formHint}>Vet’Help ignore les majuscules, accents, espaces et séparateurs du numéro pour éviter les doublons.</Text>
@@ -210,7 +232,7 @@ export function HomeScreen({ navigation }: Props) {
 
       <Text style={styles.auth}>{authStatus}</Text>
       <View style={styles.notice}>
-        <Text style={styles.noticeText}>Pour que cette connexion fonctionne, Supabase doit avoir les connexions anonymes activées et la migration des profils vétérinaires appliquée.</Text>
+        <Text style={styles.noticeText}>Pour que cette connexion fonctionne, Supabase doit avoir les connexions anonymes activées et les migrations des profils vétérinaires appliquées.</Text>
       </View>
     </ScrollView>
   );
@@ -244,6 +266,12 @@ const styles = StyleSheet.create({
   guestText: { color: '#155e75', fontWeight: '900', fontSize: 15, textAlign: 'center' },
   guestHint: { color: '#0e7490', fontSize: 12, lineHeight: 17, textAlign: 'center' },
   noGoogleButton: { backgroundColor: '#2563eb', padding: 15, borderRadius: 14, alignItems: 'center' },
+  modeSelector: { flexDirection: 'row', gap: 10 },
+  modeButton: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 14, padding: 12, backgroundColor: '#fff', gap: 4 },
+  selectedModeButton: { backgroundColor: '#dbeafe', borderColor: '#2563eb' },
+  modeButtonText: { color: '#0f172a', fontWeight: '900', fontSize: 13 },
+  selectedModeButtonText: { color: '#1d4ed8' },
+  modeHint: { color: '#64748b', fontSize: 11, lineHeight: 15 },
   noGoogleText: { color: '#fff', fontWeight: '900', fontSize: 15 },
   noGoogleForm: { gap: 10, backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#e2e8f0' },
   noGoogleTitle: { color: '#0f172a', fontWeight: '900', fontSize: 16 },

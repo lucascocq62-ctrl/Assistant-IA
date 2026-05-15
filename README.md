@@ -110,25 +110,29 @@ Pour obtenir un compte rendu rempli automatiquement par l’IA, il faut se conne
 
 ### Connexion prénom + numéro d’ordre
 
-L’écran d’accueil n’utilise plus Google. Le formulaire demande uniquement un prénom et un numéro d’ordre. Vet’Help crée alors une session Supabase anonyme, puis appelle la fonction SQL `get_or_create_vet_profile`.
+L’écran d’accueil n’utilise plus Google. Le formulaire demande un prénom et un numéro d’ordre, puis propose deux parcours distincts :
 
-Cette fonction normalise le prénom et le numéro d’ordre avant de chercher le profil : elle ignore les majuscules, les accents, les espaces et les séparateurs du numéro. Si un profil existe déjà avec les mêmes valeurs normalisées, il est réutilisé et aucun doublon n’est créé.
+- **Nouvelle connexion** : Vet’Help crée une session Supabase anonyme, appelle `create_vet_profile`, crée le profil vétérinaire, puis laisse entrer l’utilisateur. Si un profil existe déjà avec les mêmes valeurs normalisées, l’accès est refusé et l’utilisateur doit choisir **J’ai déjà un profil**.
+- **J’ai déjà un profil** : Vet’Help crée une session Supabase anonyme, appelle `verify_vet_profile`, vérifie que le profil existe déjà, puis laisse entrer l’utilisateur uniquement si le prénom + numéro d’ordre correspondent. Si aucun profil ne correspond, l’accès est refusé.
+
+Les fonctions SQL normalisent le prénom et le numéro d’ordre avant comparaison : elles ignorent les majuscules, les accents, les espaces et les séparateurs du numéro.
 
 Checklist précise pour que ça fonctionne en production :
 
 1. Supabase > Authentication > Providers : activer **Anonymous sign-ins**.
-2. Supabase > SQL Editor ou Supabase CLI : appliquer toutes les migrations avec `supabase db push`. Les migrations `202605150001_vet_profiles_without_google.sql`, `202605150002_harden_no_google_auth.sql` et `202605150003_resilient_vet_profile_policies.sql` doivent créer/renforcer `vet_profiles`, ses politiques RLS et `get_or_create_vet_profile`.
+2. Supabase > SQL Editor ou Supabase CLI : appliquer toutes les migrations avec `supabase db push`. Les migrations `202605150001_vet_profiles_without_google.sql`, `202605150002_harden_no_google_auth.sql`, `202605150003_resilient_vet_profile_policies.sql` et `202605150004_split_vet_profile_auth_flows.sql` doivent créer/renforcer `vet_profiles`, ses politiques RLS, `create_vet_profile` et `verify_vet_profile`.
 3. Vercel > Project Settings > Environment Variables : ajouter `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` avec les valeurs du projet Supabase. Attention : ces variables Expo sont injectées au build, donc il faut redéployer après chaque changement.
 4. Redéployer Vercel après l’ajout des variables, puis vérifier que le déploiement utilise bien le dernier commit.
-5. Tester l’app : saisir un prénom, saisir un numéro d’ordre, cliquer **Se connecter**. Si ça échoue, le message affiché indique maintenant quoi corriger : Anonymous sign-ins, variables Vercel, réseau ou migration RPC.
+5. Tester l’app : saisir un prénom, saisir un numéro d’ordre, choisir **Nouvelle connexion** pour créer un profil ou **J’ai déjà un profil** pour vérifier un profil existant, puis cliquer le bouton principal. Si ça échoue, le message affiché indique quoi corriger : Anonymous sign-ins, variables Vercel, profil introuvable/existant, réseau ou migration RPC.
 
-### Diagnostic si le bouton **Se connecter** ne marche pas
+### Diagnostic si la connexion ne marche pas
 
 - Si le message parle de `EXPO_PUBLIC_SUPABASE_URL` ou `EXPO_PUBLIC_SUPABASE_ANON_KEY`, ajoute les deux variables dans Vercel puis redéploie : Expo ne les lit pas dynamiquement après le build.
 - Si le message parle des connexions anonymes, active **Anonymous sign-ins** dans Supabase > Authentication > Providers.
-- Si le message parle de `get_or_create_vet_profile` ou des politiques RLS, lance `supabase db push` sur le bon projet Supabase, puis attends quelques secondes que le cache de schéma Supabase se mette à jour.
+- Si le message dit qu’un profil existe déjà, passe par **J’ai déjà un profil** au lieu de **Nouvelle connexion**.
+- Si le message dit qu’aucun profil ne correspond, vérifie le prénom et le numéro d’ordre ou crée d’abord le profil via **Nouvelle connexion**.
+- Si le message parle de `create_vet_profile`, `verify_vet_profile` ou des politiques RLS, lance `supabase db push` sur le bon projet Supabase, puis attends quelques secondes que le cache de schéma Supabase se mette à jour.
 - Si le message parle de réseau ou de délai dépassé, vérifie que l’URL Supabase correspond au bon projet et que la clé `anon public` n’a pas été copiée avec un espace.
-- Si l’app affiche “profil de secours”, la connexion Supabase Auth fonctionne, mais la table `vet_profiles` ou le RPC ne sont pas encore correctement migrés : applique la migration `202605150003_resilient_vet_profile_policies.sql`.
 
 ## Données créées en base
 
