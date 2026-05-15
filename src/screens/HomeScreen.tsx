@@ -1,7 +1,7 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Session } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { getCurrentVetProfile, signInWithoutGoogle, signOut } from '../lib/auth';
 import { getGuestMode, setGuestMode } from '../lib/guestMode';
@@ -37,7 +37,7 @@ export function HomeScreen({ navigation }: Props) {
         try {
           const profile = await getCurrentVetProfile();
           setVetProfile(profile);
-          setAuthStatus(profile ? `Connecté : ${profile.first_name} · n° ${profile.order_number}` : 'Session vétérinaire active. Renseigne ton prénom et ton numéro d’ordre si nécessaire.');
+          setAuthStatus(profile ? `Connecté : ${profile.first_name} · n° ${profile.order_number}` : 'Aucun profil vétérinaire trouvé : reconnecte-toi avec ton prénom et ton numéro d’ordre.');
         } catch (error) {
           setAuthStatus(error instanceof Error ? error.message : 'Session active, mais le profil vétérinaire est introuvable.');
         }
@@ -55,9 +55,7 @@ export function HomeScreen({ navigation }: Props) {
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (nextSession) {
-        setAuthStatus('Session vétérinaire active');
-      } else {
+      if (!nextSession) {
         setAuthStatus('Connecte-toi avec ton prénom et ton numéro d’ordre, ou continue en mode invité.');
         setVetProfile(null);
       }
@@ -79,6 +77,7 @@ export function HomeScreen({ navigation }: Props) {
     }
 
     setIsNoGoogleSigningIn(true);
+    setAuthStatus('Connexion à Supabase…');
     try {
       setNoGoogleError(null);
       const { profile, session: nextSession } = await signInWithoutGoogle(firstName, orderNumber);
@@ -90,6 +89,9 @@ export function HomeScreen({ navigation }: Props) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Vérifie le prénom et le numéro d’ordre.';
       setNoGoogleError(message);
+      setVetProfile(null);
+      setSession(null);
+      setAuthStatus('Connexion impossible : corrige la configuration Supabase puis réessaie.');
       Alert.alert('Connexion impossible', message);
     } finally {
       setIsNoGoogleSigningIn(false);
@@ -111,8 +113,8 @@ export function HomeScreen({ navigation }: Props) {
     setSession(null);
   };
 
-  const connectedLabel = vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : session ? 'Session vétérinaire active' : 'Mode invité (sans compte)';
-  const canUseApp = Boolean(session || isGuestMode);
+  const connectedLabel = vetProfile ? `${vetProfile.first_name} · n° ${vetProfile.order_number}` : 'Mode invité (sans compte)';
+  const canUseApp = Boolean(vetProfile || isGuestMode);
   const canSubmitNoGoogle = Boolean(firstName.trim() && orderNumber.trim() && !isNoGoogleSigningIn);
 
   return (
@@ -164,21 +166,30 @@ export function HomeScreen({ navigation }: Props) {
             <Text style={styles.formHint}>Renseigne ton prénom et ton numéro d’ordre. Si le profil existe déjà, il sera réutilisé.</Text>
             <TextInput
               autoCapitalize="words"
+              autoCorrect={false}
+              editable={!isNoGoogleSigningIn}
               placeholder="Prénom"
+              returnKeyType="next"
               style={styles.input}
               value={firstName}
               onChangeText={setFirstName}
             />
             <TextInput
               autoCapitalize="characters"
+              autoCorrect={false}
+              editable={!isNoGoogleSigningIn}
+              onSubmitEditing={() => {
+                if (canSubmitNoGoogle) void handleNoGoogleSignIn();
+              }}
               placeholder="Numéro d’ordre"
+              returnKeyType="go"
               style={styles.input}
               value={orderNumber}
               onChangeText={setOrderNumber}
             />
-            <TouchableOpacity accessibilityRole="button" activeOpacity={0.82} style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={!canSubmitNoGoogle}>
-              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion…' : 'Se connecter'}</Text>
-            </TouchableOpacity>
+            <Pressable accessibilityRole="button" style={[styles.noGoogleButton, !canSubmitNoGoogle && styles.disabledButton]} onPress={handleNoGoogleSignIn} disabled={!canSubmitNoGoogle}>
+              <Text style={styles.noGoogleText}>{isNoGoogleSigningIn ? 'Connexion sécurisée…' : 'Se connecter'}</Text>
+            </Pressable>
             {noGoogleError ? <Text style={styles.errorText}>{noGoogleError}</Text> : null}
             <Text style={styles.formHint}>Vet’Help ignore les majuscules, accents, espaces et séparateurs du numéro pour éviter les doublons.</Text>
           </View>
@@ -189,7 +200,7 @@ export function HomeScreen({ navigation }: Props) {
             <View style={styles.separatorLine} />
           </View>
 
-          <Pressable accessibilityRole="button" style={styles.guestButton} onPress={handleGuestAccess}>
+          <Pressable accessibilityRole="button" style={styles.guestButton} onPress={handleGuestAccess} disabled={isNoGoogleSigningIn}>
             <Text style={styles.guestText}>Accéder sans authentification</Text>
             <Text style={styles.guestHint}>Mode invité : modèles locaux et compte rendu brouillon, sans sauvegarde Supabase.</Text>
           </Pressable>

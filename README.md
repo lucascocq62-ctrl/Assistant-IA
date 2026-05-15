@@ -117,10 +117,17 @@ Cette fonction normalise le prénom et le numéro d’ordre avant de chercher le
 Checklist précise pour que ça fonctionne en production :
 
 1. Supabase > Authentication > Providers : activer **Anonymous sign-ins**.
-2. Supabase > SQL Editor ou Supabase CLI : appliquer les migrations avec `supabase db push`. La migration `202605150001_vet_profiles_without_google.sql` doit créer `vet_profiles` et `get_or_create_vet_profile`.
-3. Vercel > Project Settings > Environment Variables : ajouter `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` avec les valeurs du projet Supabase.
-4. Redéployer Vercel après l’ajout des variables.
-5. Tester l’app : saisir un prénom, saisir un numéro d’ordre, cliquer **Se connecter**. Si ça échoue avec un message sur la session anonyme, l’étape 1 n’est pas active sur le projet Supabase utilisé par les variables Vercel.
+2. Supabase > SQL Editor ou Supabase CLI : appliquer toutes les migrations avec `supabase db push`. Les migrations `202605150001_vet_profiles_without_google.sql` et `202605150002_harden_no_google_auth.sql` doivent créer/renforcer `vet_profiles` et `get_or_create_vet_profile`.
+3. Vercel > Project Settings > Environment Variables : ajouter `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` avec les valeurs du projet Supabase. Attention : ces variables Expo sont injectées au build, donc il faut redéployer après chaque changement.
+4. Redéployer Vercel après l’ajout des variables, puis vérifier que le déploiement utilise bien le dernier commit.
+5. Tester l’app : saisir un prénom, saisir un numéro d’ordre, cliquer **Se connecter**. Si ça échoue, le message affiché indique maintenant quoi corriger : Anonymous sign-ins, variables Vercel, réseau ou migration RPC.
+
+### Diagnostic si le bouton **Se connecter** ne marche pas
+
+- Si le message parle de `EXPO_PUBLIC_SUPABASE_URL` ou `EXPO_PUBLIC_SUPABASE_ANON_KEY`, ajoute les deux variables dans Vercel puis redéploie : Expo ne les lit pas dynamiquement après le build.
+- Si le message parle des connexions anonymes, active **Anonymous sign-ins** dans Supabase > Authentication > Providers.
+- Si le message parle de `get_or_create_vet_profile`, lance `supabase db push` sur le bon projet Supabase, puis attends quelques secondes que le cache de schéma Supabase se mette à jour.
+- Si le message parle de réseau ou de délai dépassé, vérifie que l’URL Supabase correspond au bon projet et que la clé `anon public` n’a pas été copiée avec un espace.
 
 ## Données créées en base
 
