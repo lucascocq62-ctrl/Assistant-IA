@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { decode } from 'base64-arraybuffer';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { ProviderSelector } from '../components/ProviderSelector';
@@ -14,6 +14,8 @@ import { ConsultationReport, ConsultationTemplate, TranscriptionProvider } from 
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Record'>;
 
+const RECORDING_WARNING_LIMIT_BYTES = 20 * 1024 * 1024;
+const RECORDING_AUTO_STOP_LIMIT_BYTES = 22 * 1024 * 1024;
 const TRANSCRIPTION_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const SUPABASE_AUDIO_BUCKET_LIMIT_BYTES = 100 * 1024 * 1024;
 
@@ -69,6 +71,8 @@ export function RecordScreen({ navigation, route }: Props) {
   const [templates, setTemplates] = useState<ConsultationTemplate[]>(defaultTemplates);
   const [isGuestMode, setIsGuestMode] = useState(Boolean(route.params?.isGuest));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const recordingWarningShownRef = useRef(false);
+  const autoStoppingRecordingRef = useRef(false);
 
   const exceedsTranscriptionLimit = Boolean(audioSizeBytes && audioSizeBytes > TRANSCRIPTION_FILE_LIMIT_BYTES);
   const canSubmit = useMemo(
@@ -107,6 +111,48 @@ export function RecordScreen({ navigation, route }: Props) {
     };
   }, [recording]);
 
+  useEffect(() => {
+    if (!recording) return undefined;
+
+    const sizeInterval = setInterval(() => {
+      const currentUri = recording.getURI();
+      if (!currentUri || autoStoppingRecordingRef.current) return;
+
+      void FileSystem.getInfoAsync(currentUri, { size: true })
+        .then(async (info) => {
+          if (!info.exists || !info.size) return;
+
+          setAudioSizeBytes(info.size);
+
+          if (info.size >= RECORDING_WARNING_LIMIT_BYTES && !recordingWarningShownRef.current) {
+            recordingWarningShownRef.current = true;
+            Alert.alert(
+              'Audio presque trop volumineux',
+              `L’enregistrement atteint ${formatFileSize(info.size)}. Il sera arrêté automatiquement à ${formatFileSize(RECORDING_AUTO_STOP_LIMIT_BYTES)} pour rester compatible avec la transcription.`,
+            );
+          }
+
+          if (info.size < RECORDING_AUTO_STOP_LIMIT_BYTES || autoStoppingRecordingRef.current) return;
+
+          autoStoppingRecordingRef.current = true;
+          const status = await recording.getStatusAsync();
+          await recording.stopAndUnloadAsync();
+          const uri = recording.getURI() ?? currentUri;
+          setRecording(null);
+          setAudioUri(uri);
+          setAudioDurationMillis(status.durationMillis ?? 0);
+          await readAudioInfo(uri);
+          Alert.alert(
+            'Enregistrement arrêté',
+            `L’audio a atteint ${formatFileSize(RECORDING_AUTO_STOP_LIMIT_BYTES)} et a été arrêté automatiquement. Tu peux l’envoyer, l’effacer ou reprendre un nouvel enregistrement.`,
+          );
+        })
+        .catch(() => undefined);
+    }, 1000);
+
+    return () => clearInterval(sizeInterval);
+  }, [recording]);
+
   const resetAudio = async () => {
     if (audioUri) {
       await FileSystem.deleteAsync(audioUri, { idempotent: true });
@@ -128,7 +174,10 @@ export function RecordScreen({ navigation, route }: Props) {
       return;
     }
     if (audioUri) await resetAudio();
+    recordingWarningShownRef.current = false;
+    autoStoppingRecordingRef.current = false;
     setAudioDurationMillis(0);
+    setAudioSizeBytes(undefined);
     await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
     const { recording: nextRecording } = await Audio.Recording.createAsync(
       Audio.RecordingOptionsPresets.HIGH_QUALITY,
@@ -141,7 +190,7 @@ export function RecordScreen({ navigation, route }: Props) {
   };
 
   const stopRecording = async () => {
-    if (!recording) return;
+    if (!recording || autoStoppingRecordingRef.current) return;
     const status = await recording.getStatusAsync();
     await recording.stopAndUnloadAsync();
     const uri = recording.getURI();
@@ -266,6 +315,7 @@ export function RecordScreen({ navigation, route }: Props) {
         <View style={styles.recordingPanel}>
           <Text style={styles.recordingBadge}>● Enregistrement en cours</Text>
           <Text style={styles.timer}>{formatDuration(audioDurationMillis)}</Text>
+          <Text style={styles.audioMeta}>Taille : {formatFileSize(audioSizeBytes)}</Text>
           <Pressable style={styles.dangerButton} onPress={stopRecording}>
             <Text style={styles.buttonText}>Arrêter l’enregistrement</Text>
           </Pressable>
