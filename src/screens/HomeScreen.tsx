@@ -10,6 +10,22 @@ import type { VetProfile } from '../lib/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
+const workflowSteps = [
+  { title: 'Capture', text: 'Enregistre la consultation au fil de l’examen, avec suivi du temps et de la taille audio.' },
+  { title: 'Génère', text: 'Transcription Groq/OpenAI puis compte rendu structuré selon tes modèles vétérinaires.' },
+  { title: 'Valide', text: 'Relis, corrige et copie le résultat dans ton logiciel métier ou ton dossier patient.' },
+];
+
+const featureCards = [
+  { title: 'Modèles personnalisables', text: 'SOAP, chirurgie, NAC, urgence, suivi : adapte les rubriques à ton style de rédaction.' },
+  { title: 'Confidentialité opérationnelle', text: 'Audio temporaire, bucket privé Supabase et suppression après traitement côté fonction.' },
+  { title: 'Mode terrain', text: 'Un mode invité permet de préparer un brouillon local quand l’accès complet n’est pas disponible.' },
+  { title: 'Multi-fournisseurs IA', text: 'Choisis Groq pour la vitesse/coût ou OpenAI pour une intégration unifiée.' },
+];
+
+const trustBadges = ['Audio temporaire', 'Workflow vétérinaire', 'Modèles de clinique', 'Relecture obligatoire'];
+const specialties = ['Médecine générale', 'Urgences', 'Chirurgie', 'NAC', 'Équine', 'Suivi client'];
+
 export function HomeScreen({ navigation }: Props) {
   const [session, setSession] = useState<Session | null>(null);
   const [authStatus, setAuthStatus] = useState('Connexion Supabase…');
@@ -123,25 +139,67 @@ export function HomeScreen({ navigation }: Props) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.heroCard}>
-        <View style={styles.logoMark}>
-          <Text style={styles.logoText}>VH</Text>
+        <View style={styles.heroTopRow}>
+          <View style={styles.logoMark}>
+            <Text style={styles.logoText}>VH</Text>
+          </View>
+          <View style={styles.heroBadge}>
+            <Text style={styles.heroBadgeText}>Copilote clinique IA</Text>
+          </View>
         </View>
         <Text style={styles.kicker}>Assistant IA vétérinaire</Text>
-        <Text style={styles.title}>Vet'Help</Text>
+        <Text style={styles.title}>Des comptes rendus propres avant la fin de la consultation.</Text>
         <Text style={styles.subtitle}>
-          Transforme tes consultations enregistrées en comptes rendus vétérinaires structurés, relisibles et prêts à valider.
+          Vet’Help capture la consultation, génère une note structurée et te laisse garder le contrôle médical avant export.
         </Text>
 
         <View style={styles.benefitsRow}>
-          <View style={styles.benefitPill}>
-            <Text style={styles.benefitText}>Audio supprimé</Text>
+          {trustBadges.map((badge) => (
+            <View key={badge} style={styles.benefitPill}>
+              <Text style={styles.benefitText}>{badge}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.heroPreview}>
+          <Text style={styles.previewEyebrow}>Flux de travail</Text>
+          <View style={styles.previewLine}>
+            <Text style={styles.previewStep}>● Capture</Text>
+            <Text style={styles.previewArrow}>→</Text>
+            <Text style={styles.previewStep}>Génère</Text>
+            <Text style={styles.previewArrow}>→</Text>
+            <Text style={styles.previewStep}>Valide</Text>
           </View>
-          <View style={styles.benefitPill}>
-            <Text style={styles.benefitText}>Groq ou OpenAI</Text>
+        </View>
+      </View>
+
+      <View style={styles.workflowGrid}>
+        {workflowSteps.map((step, index) => (
+          <View key={step.title} style={styles.workflowCard}>
+            <Text style={styles.workflowIndex}>{String(index + 1).padStart(2, '0')}</Text>
+            <Text style={styles.workflowTitle}>{step.title}</Text>
+            <Text style={styles.workflowText}>{step.text}</Text>
           </View>
-          <View style={styles.benefitPill}>
-            <Text style={styles.benefitText}>Modèles sur mesure</Text>
-          </View>
+        ))}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionKicker}>Pensé pour la clinique</Text>
+        <Text style={styles.sectionTitle}>Un scribe IA vétérinaire, pas un dictaphone générique.</Text>
+        <View style={styles.featureGrid}>
+          {featureCards.map((feature) => (
+            <View key={feature.title} style={styles.featureCard}>
+              <Text style={styles.featureTitle}>{feature.title}</Text>
+              <Text style={styles.featureText}>{feature.text}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.specialtyRow}>
+          {specialties.map((specialty) => (
+            <View key={specialty} style={styles.specialtyPill}>
+              <Text style={styles.specialtyText}>{specialty}</Text>
+            </View>
+          ))}
         </View>
       </View>
 
@@ -149,6 +207,20 @@ export function HomeScreen({ navigation }: Props) {
         <View style={styles.actionCard}>
           <Text style={styles.userLabel}>{isGuestMode && !session ? 'Accès sans authentification' : 'Compte connecté'}</Text>
           <Text style={styles.userEmail}>{connectedLabel}</Text>
+          <View style={styles.quickActionsRow}>
+            <View style={styles.quickMetric}>
+              <Text style={styles.quickMetricValue}>3</Text>
+              <Text style={styles.quickMetricLabel}>étapes</Text>
+            </View>
+            <View style={styles.quickMetric}>
+              <Text style={styles.quickMetricValue}>2</Text>
+              <Text style={styles.quickMetricLabel}>IA au choix</Text>
+            </View>
+            <View style={styles.quickMetric}>
+              <Text style={styles.quickMetricValue}>0</Text>
+              <Text style={styles.quickMetricLabel}>audio conservé</Text>
+            </View>
+          </View>
           <Pressable style={styles.primaryButton} onPress={() => navigation.navigate('Record', { isGuest: isGuestMode && !session })}>
             <Text style={styles.primaryText}>Démarrer une consultation</Text>
           </Pressable>
@@ -239,38 +311,65 @@ export function HomeScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#eaf2ff' },
+  screen: { flex: 1, backgroundColor: '#eef7f6' },
   container: { flexGrow: 1, padding: 22, justifyContent: 'center', gap: 16 },
-  heroCard: { backgroundColor: '#0f172a', borderRadius: 28, padding: 24, gap: 14, shadowColor: '#0f172a', shadowOpacity: 0.18, shadowRadius: 22, shadowOffset: { width: 0, height: 12 } },
-  logoMark: { width: 58, height: 58, borderRadius: 18, backgroundColor: '#38bdf8', alignItems: 'center', justifyContent: 'center' },
-  logoText: { color: '#082f49', fontWeight: '900', fontSize: 22 },
-  kicker: { color: '#93c5fd', fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, fontSize: 12 },
-  title: { fontSize: 42, fontWeight: '900', color: '#fff' },
-  subtitle: { fontSize: 16, lineHeight: 24, color: '#dbeafe' },
+  heroCard: { backgroundColor: '#062f2f', borderRadius: 32, padding: 24, gap: 14, shadowColor: '#0f172a', shadowOpacity: 0.2, shadowRadius: 24, shadowOffset: { width: 0, height: 14 } },
+  heroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  logoMark: { width: 58, height: 58, borderRadius: 18, backgroundColor: '#7dd3fc', alignItems: 'center', justifyContent: 'center' },
+  logoText: { color: '#083344', fontWeight: '900', fontSize: 22 },
+  heroBadge: { backgroundColor: 'rgba(236,253,245,0.14)', borderWidth: 1, borderColor: 'rgba(167,243,208,0.35)', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
+  heroBadgeText: { color: '#ccfbf1', fontWeight: '900', fontSize: 12 },
+  kicker: { color: '#99f6e4', fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, fontSize: 12 },
+  title: { fontSize: 38, lineHeight: 42, fontWeight: '900', color: '#fff' },
+  subtitle: { fontSize: 16, lineHeight: 24, color: '#d1fae5' },
   benefitsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   benefitPill: { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 10 },
-  benefitText: { color: '#e0f2fe', fontWeight: '700', fontSize: 12 },
-  actionCard: { backgroundColor: '#fff', borderColor: '#dbeafe', borderWidth: 1, padding: 18, borderRadius: 22, gap: 12 },
+  benefitText: { color: '#ecfeff', fontWeight: '700', fontSize: 12 },
+  heroPreview: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', gap: 8 },
+  previewEyebrow: { color: '#99f6e4', fontWeight: '900', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
+  previewLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  previewStep: { color: '#fff', fontWeight: '900' },
+  previewArrow: { color: '#67e8f9', fontWeight: '900' },
+  workflowGrid: { gap: 10 },
+  workflowCard: { backgroundColor: '#fff', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#ccfbf1', gap: 7 },
+  workflowIndex: { color: '#0d9488', fontWeight: '900', fontSize: 12 },
+  workflowTitle: { color: '#0f172a', fontWeight: '900', fontSize: 18 },
+  workflowText: { color: '#475569', lineHeight: 20 },
+  sectionCard: { backgroundColor: '#fff', borderRadius: 26, padding: 18, borderWidth: 1, borderColor: '#dbeafe', gap: 14 },
+  sectionKicker: { color: '#0d9488', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1, fontSize: 12 },
+  sectionTitle: { color: '#0f172a', fontWeight: '900', fontSize: 22, lineHeight: 27 },
+  featureGrid: { gap: 10 },
+  featureCard: { backgroundColor: '#f8fafc', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#e2e8f0', gap: 6 },
+  featureTitle: { color: '#0f172a', fontWeight: '900' },
+  featureText: { color: '#475569', lineHeight: 19, fontSize: 13 },
+  specialtyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  specialtyPill: { backgroundColor: '#ecfeff', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 10, borderWidth: 1, borderColor: '#a5f3fc' },
+  specialtyText: { color: '#155e75', fontWeight: '800', fontSize: 12 },
+  actionCard: { backgroundColor: '#fff', borderColor: '#ccfbf1', borderWidth: 1, padding: 18, borderRadius: 22, gap: 12 },
   actionTitle: { color: '#0f172a', fontWeight: '900', fontSize: 20 },
   actionText: { color: '#475569', lineHeight: 21 },
   userLabel: { color: '#64748b', fontWeight: '700' },
   userEmail: { color: '#0f172a', fontWeight: '900', marginBottom: 4 },
-  primaryButton: { backgroundColor: '#2563eb', padding: 16, borderRadius: 14, alignItems: 'center' },
+  quickActionsRow: { flexDirection: 'row', gap: 8 },
+  quickMetric: { flex: 1, backgroundColor: '#f0fdfa', borderRadius: 14, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: '#ccfbf1' },
+  quickMetricValue: { color: '#0f766e', fontWeight: '900', fontSize: 20 },
+  quickMetricLabel: { color: '#475569', fontWeight: '700', fontSize: 11, textAlign: 'center' },
+  primaryButton: { backgroundColor: '#0f766e', padding: 16, borderRadius: 14, alignItems: 'center' },
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  secondaryButton: { backgroundColor: '#e0f2fe', padding: 16, borderRadius: 14, alignItems: 'center' },
-  secondaryText: { color: '#0369a1', fontWeight: '800', fontSize: 15 },
+  secondaryButton: { backgroundColor: '#ecfeff', padding: 16, borderRadius: 14, alignItems: 'center' },
+  secondaryText: { color: '#0e7490', fontWeight: '800', fontSize: 15 },
   separatorRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
   separatorLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
   separatorText: { color: '#64748b', fontWeight: '800' },
   guestButton: { backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#67e8f9', padding: 14, borderRadius: 14, gap: 4 },
   guestText: { color: '#155e75', fontWeight: '900', fontSize: 15, textAlign: 'center' },
   guestHint: { color: '#0e7490', fontSize: 12, lineHeight: 17, textAlign: 'center' },
-  noGoogleButton: { backgroundColor: '#2563eb', padding: 15, borderRadius: 14, alignItems: 'center' },
+  noGoogleButton: { backgroundColor: '#0f766e', padding: 15, borderRadius: 14, alignItems: 'center' },
   modeSelector: { flexDirection: 'row', gap: 10 },
   modeButton: { flex: 1, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 14, padding: 12, backgroundColor: '#fff', gap: 4 },
-  selectedModeButton: { backgroundColor: '#dbeafe', borderColor: '#2563eb' },
+  selectedModeButton: { backgroundColor: '#ccfbf1', borderColor: '#0d9488' },
   modeButtonText: { color: '#0f172a', fontWeight: '900', fontSize: 13 },
-  selectedModeButtonText: { color: '#1d4ed8' },
+  selectedModeButtonText: { color: '#0f766e' },
   modeHint: { color: '#64748b', fontSize: 11, lineHeight: 15 },
   noGoogleText: { color: '#fff', fontWeight: '900', fontSize: 15 },
   noGoogleForm: { gap: 10, backgroundColor: '#f8fafc', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#e2e8f0' },
@@ -282,6 +381,6 @@ const styles = StyleSheet.create({
   logoutButton: { padding: 8, alignItems: 'center' },
   logoutText: { color: '#dc2626', fontWeight: '800' },
   auth: { color: '#334155', fontWeight: '700', textAlign: 'center' },
-  notice: { borderLeftWidth: 4, borderLeftColor: '#2563eb', padding: 12, backgroundColor: '#eff6ff', borderRadius: 8 },
-  noticeText: { color: '#1e3a8a', lineHeight: 20 },
+  notice: { borderLeftWidth: 4, borderLeftColor: '#0d9488', padding: 12, backgroundColor: '#f0fdfa', borderRadius: 8 },
+  noticeText: { color: '#115e59', lineHeight: 20 },
 });
