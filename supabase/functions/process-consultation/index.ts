@@ -9,6 +9,10 @@ type TranscriptionProvider = 'groq' | 'openai';
 type TemplateSection = { id: string; title: string; instruction: string };
 type ConsultationTemplate = { id?: string; name: string; description?: string | null; sections: TemplateSection[] };
 
+const TRANSCRIPTION_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
+
+const formatFileSize = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+
 type RequestBody = {
   consultationId: string;
   audioPath: string;
@@ -78,6 +82,9 @@ Deno.serve(async (req) => {
 
     const { data: audioData, error: downloadError } = await supabase.storage.from('audio-temp').download(body.audioPath);
     if (downloadError || !audioData) throw downloadError ?? new Error('Audio introuvable.');
+    if (audioData.size > TRANSCRIPTION_FILE_LIMIT_BYTES) {
+      throw new Error(`Audio trop volumineux (${formatFileSize(audioData.size)}). Les endpoints de transcription Groq/OpenAI utilisés ici acceptent environ ${formatFileSize(TRANSCRIPTION_FILE_LIMIT_BYTES)} par fichier : découpe ou compresse l’audio avant de relancer.`);
+    }
 
     const transcription = await transcribeAudio(audioData, body.transcriptionProvider);
     const report = await draftReport({ transcription, template: body.template, patient: body.patient, reportModel });

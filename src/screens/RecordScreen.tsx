@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { decode } from 'base64-arraybuffer';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RootStackParamList } from '../../App';
 import { ProviderSelector } from '../components/ProviderSelector';
@@ -13,6 +13,25 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { ConsultationReport, ConsultationTemplate, TranscriptionProvider } from '../lib/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Record'>;
+
+const RECORDING_WARNING_LIMIT_BYTES = 20 * 1024 * 1024;
+const RECORDING_AUTO_STOP_LIMIT_BYTES = 22 * 1024 * 1024;
+const TRANSCRIPTION_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
+const SUPABASE_AUDIO_BUCKET_LIMIT_BYTES = 100 * 1024 * 1024;
+
+const formatDuration = (millis: number) => {
+  const totalSeconds = Math.max(0, Math.floor(millis / 1000));
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${seconds}`;
+};
+
+const formatFileSize = (bytes?: number) => {
+  if (!bytes) return 'taille inconnue';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+};
+
 
 const createGuestReport = (args: {
   patientName: string;
@@ -42,6 +61,8 @@ const createGuestReport = (args: {
 export function RecordScreen({ navigation, route }: Props) {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [audioUri, setAudioUri] = useState<string | null>(null);
+  const [audioDurationMillis, setAudioDurationMillis] = useState(0);
+  const [audioSizeBytes, setAudioSizeBytes] = useState<number | undefined>();
   const [provider, setProvider] = useState<TranscriptionProvider>('groq');
   const [patientName, setPatientName] = useState('');
   const [ownerName, setOwnerName] = useState('');
@@ -50,8 +71,14 @@ export function RecordScreen({ navigation, route }: Props) {
   const [templates, setTemplates] = useState<ConsultationTemplate[]>(defaultTemplates);
   const [isGuestMode, setIsGuestMode] = useState(Boolean(route.params?.isGuest));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const recordingWarningShownRef = useRef(false);
+  const autoStoppingRecordingRef = useRef(false);
 
-  const canSubmit = useMemo(() => Boolean(audioUri && patientName.trim() && !isSubmitting), [audioUri, patientName, isSubmitting]);
+  const exceedsTranscriptionLimit = Boolean(audioSizeBytes && audioSizeBytes > TRANSCRIPTION_FILE_LIMIT_BYTES);
+  const canSubmit = useMemo(
+    () => Boolean(audioUri && patientName.trim() && !isSubmitting && !exceedsTranscriptionLimit),
+    [audioUri, patientName, isSubmitting, exceedsTranscriptionLimit],
+  );
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -76,24 +103,101 @@ export function RecordScreen({ navigation, route }: Props) {
     void loadTemplates();
   }, [route.params?.isGuest]);
 
+  useEffect(() => {
+    return () => {
+      if (recording) {
+        void recording.stopAndUnloadAsync().catch(() => undefined);
+      }
+    };
+  }, [recording]);
+
+  useEffect(() => {
+    if (!recording) return undefined;
+
+    const sizeInterval = setInterval(() => {
+      const currentUri = recording.getURI();
+      if (!currentUri || autoStoppingRecordingRef.current) return;
+
+      void FileSystem.getInfoAsync(currentUri, { size: true })
+        .then(async (info) => {
+          if (!info.exists || !info.size) return;
+
+          setAudioSizeBytes(info.size);
+
+          if (info.size >= RECORDING_WARNING_LIMIT_BYTES && !recordingWarningShownRef.current) {
+            recordingWarningShownRef.current = true;
+            Alert.alert(
+              'Audio presque trop volumineux',
+              `L’enregistrement atteint ${formatFileSize(info.size)}. Il sera arrêté automatiquement à ${formatFileSize(RECORDING_AUTO_STOP_LIMIT_BYTES)} pour rester compatible avec la transcription.`,
+            );
+          }
+
+          if (info.size < RECORDING_AUTO_STOP_LIMIT_BYTES || autoStoppingRecordingRef.current) return;
+
+          autoStoppingRecordingRef.current = true;
+          const status = await recording.getStatusAsync();
+          await recording.stopAndUnloadAsync();
+          const uri = recording.getURI() ?? currentUri;
+          setRecording(null);
+          setAudioUri(uri);
+          setAudioDurationMillis(status.durationMillis ?? 0);
+          await readAudioInfo(uri);
+          Alert.alert(
+            'Enregistrement arrêté',
+            `L’audio a atteint ${formatFileSize(RECORDING_AUTO_STOP_LIMIT_BYTES)} et a été arrêté automatiquement. Tu peux l’envoyer, l’effacer ou reprendre un nouvel enregistrement.`,
+          );
+        })
+        .catch(() => undefined);
+    }, 1000);
+
+    return () => clearInterval(sizeInterval);
+  }, [recording]);
+
+  const resetAudio = async () => {
+    if (audioUri) {
+      await FileSystem.deleteAsync(audioUri, { idempotent: true });
+    }
+    setAudioUri(null);
+    setAudioDurationMillis(0);
+    setAudioSizeBytes(undefined);
+  };
+
+  const readAudioInfo = async (uri: string) => {
+    const info = await FileSystem.getInfoAsync(uri, { size: true });
+    setAudioSizeBytes(info.exists ? info.size : undefined);
+  };
+
   const startRecording = async () => {
     const permission = await Audio.requestPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Micro refusé', 'Autorise le microphone pour enregistrer la consultation.');
       return;
     }
+    if (audioUri) await resetAudio();
+    recordingWarningShownRef.current = false;
+    autoStoppingRecordingRef.current = false;
+    setAudioDurationMillis(0);
+    setAudioSizeBytes(undefined);
     await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-    const { recording: nextRecording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    const { recording: nextRecording } = await Audio.Recording.createAsync(
+      Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      (status) => {
+        if (status.canRecord || status.isRecording) setAudioDurationMillis(status.durationMillis ?? 0);
+      },
+      500,
+    );
     setRecording(nextRecording);
-    setAudioUri(null);
   };
 
   const stopRecording = async () => {
-    if (!recording) return;
+    if (!recording || autoStoppingRecordingRef.current) return;
+    const status = await recording.getStatusAsync();
     await recording.stopAndUnloadAsync();
     const uri = recording.getURI();
     setRecording(null);
     setAudioUri(uri);
+    setAudioDurationMillis(status.durationMillis ?? audioDurationMillis);
+    if (uri) await readAudioInfo(uri);
   };
 
   const submitGuestConsultation = async () => {
@@ -105,8 +209,7 @@ export function RecordScreen({ navigation, route }: Props) {
       template,
       provider,
     });
-    await FileSystem.deleteAsync(audioUri, { idempotent: true });
-    setAudioUri(null);
+    await resetAudio();
     navigation.replace('Report', { localReport });
   };
 
@@ -121,6 +224,11 @@ export function RecordScreen({ navigation, route }: Props) {
 
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error('Connecte-toi à Supabase avant de créer une consultation ou active le mode invité.');
+      const info = await FileSystem.getInfoAsync(audioUri, { size: true });
+      const currentAudioSize = info.exists ? info.size : audioSizeBytes;
+      if (currentAudioSize && currentAudioSize > TRANSCRIPTION_FILE_LIMIT_BYTES) {
+        throw new Error(`Audio trop volumineux (${formatFileSize(currentAudioSize)}). Groq et OpenAI acceptent environ 25 Mo par fichier via l’API actuelle : compresse ou découpe l’audio avant l’envoi.`);
+      }
 
       const { data: consultation, error: insertError } = await supabase
         .from('consultations')
@@ -168,8 +276,7 @@ export function RecordScreen({ navigation, route }: Props) {
       });
       if (error) throw error;
 
-      await FileSystem.deleteAsync(audioUri, { idempotent: true });
-      setAudioUri(null);
+      await resetAudio();
       navigation.replace('Report', { consultationId: consultation.id });
     } catch (error) {
       Alert.alert('Erreur', error instanceof Error ? error.message : 'Impossible de traiter la consultation.');
@@ -205,15 +312,36 @@ export function RecordScreen({ navigation, route }: Props) {
 
       <Text style={styles.label}>Audio</Text>
       {recording ? (
-        <Pressable style={styles.dangerButton} onPress={stopRecording}>
-          <Text style={styles.buttonText}>Arrêter l’enregistrement</Text>
-        </Pressable>
+        <View style={styles.recordingPanel}>
+          <Text style={styles.recordingBadge}>● Enregistrement en cours</Text>
+          <Text style={styles.timer}>{formatDuration(audioDurationMillis)}</Text>
+          <Text style={styles.audioMeta}>Taille : {formatFileSize(audioSizeBytes)}</Text>
+          <Pressable style={styles.dangerButton} onPress={stopRecording}>
+            <Text style={styles.buttonText}>Arrêter l’enregistrement</Text>
+          </Pressable>
+        </View>
+      ) : audioUri ? (
+        <View style={styles.audioPanel}>
+          <Text style={styles.ready}>Audio prêt avant envoi</Text>
+          <Text style={styles.audioMeta}>Durée : {formatDuration(audioDurationMillis)} · Taille : {formatFileSize(audioSizeBytes)}</Text>
+          <Text style={exceedsTranscriptionLimit ? styles.limitError : styles.helper}>
+            Limites actuelles : stockage Supabase configuré à {formatFileSize(SUPABASE_AUDIO_BUCKET_LIMIT_BYTES)}, mais Groq/OpenAI acceptent environ {formatFileSize(TRANSCRIPTION_FILE_LIMIT_BYTES)} par transcription. Pour un fichier plus gros, il faudra compresser ou découper avant transcription.
+          </Text>
+          <View style={styles.audioActions}>
+            <Pressable style={[styles.secondaryButton, styles.actionButton]} onPress={startRecording}>
+              <Text style={styles.secondaryButtonText}>Reprendre</Text>
+            </Pressable>
+            <Pressable style={[styles.deleteButton, styles.actionButton]} onPress={resetAudio}>
+              <Text style={styles.buttonText}>Effacer</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.helper}>{isGuestMode ? 'En mode invité, l’audio reste local et sera supprimé après création du brouillon.' : 'À l’envoi, l’audio est transféré vers Supabase Storage puis transmis à Groq/OpenAI par la fonction sécurisée.'}</Text>
+        </View>
       ) : (
         <Pressable style={styles.primaryButton} onPress={startRecording}>
-          <Text style={styles.buttonText}>{audioUri ? 'Réenregistrer' : 'Lancer l’enregistrement'}</Text>
+          <Text style={styles.buttonText}>Lancer l’enregistrement</Text>
         </Pressable>
       )}
-      {audioUri && <Text style={styles.ready}>{isGuestMode ? 'Audio prêt. Il restera local et sera supprimé après création du brouillon.' : 'Audio prêt. Il sera supprimé après transcription.'}</Text>}
 
       <Pressable style={[styles.submitButton, !canSubmit && styles.disabled]} disabled={!canSubmit} onPress={submitConsultation}>
         <Text style={styles.buttonText}>{isSubmitting ? 'Traitement en cours…' : isGuestMode ? 'Créer un brouillon local' : 'Transcrire et générer le compte rendu'}</Text>
@@ -234,7 +362,18 @@ const styles = StyleSheet.create({
   cardTitle: { fontWeight: '800', color: '#0f172a' },
   cardText: { color: '#64748b', marginTop: 4 },
   primaryButton: { backgroundColor: '#2563eb', padding: 16, borderRadius: 14, alignItems: 'center' },
+  secondaryButton: { backgroundColor: '#fff', padding: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#2563eb' },
+  secondaryButtonText: { color: '#1d4ed8', fontWeight: '800', textAlign: 'center' },
   dangerButton: { backgroundColor: '#dc2626', padding: 16, borderRadius: 14, alignItems: 'center' },
+  deleteButton: { backgroundColor: '#dc2626', padding: 14, borderRadius: 12, alignItems: 'center' },
+  recordingPanel: { backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 16, padding: 16, gap: 12, alignItems: 'center' },
+  recordingBadge: { color: '#b91c1c', fontWeight: '900' },
+  timer: { color: '#0f172a', fontSize: 42, fontWeight: '900', letterSpacing: 1 },
+  audioPanel: { backgroundColor: '#fff', borderColor: '#bbf7d0', borderWidth: 1, borderRadius: 16, padding: 16, gap: 10 },
+  audioMeta: { color: '#0f172a', fontWeight: '700' },
+  audioActions: { flexDirection: 'row', gap: 10 },
+  actionButton: { flex: 1 },
+  limitError: { color: '#b91c1c', fontWeight: '800', lineHeight: 20 },
   submitButton: { marginTop: 18, backgroundColor: '#16a34a', padding: 16, borderRadius: 14, alignItems: 'center' },
   disabled: { opacity: 0.45 },
   buttonText: { color: '#fff', fontWeight: '800', textAlign: 'center' },
